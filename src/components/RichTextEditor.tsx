@@ -1,31 +1,41 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Bold,
+  Camera,
   CheckSquare,
+  ImagePlus,
   Italic,
   List,
   ListOrdered,
   Redo2,
   Underline,
   Undo2,
+  X,
 } from 'lucide-react';
+import { readAndCompressImage } from '../utils/noteHelpers';
 
 interface RichTextEditorProps {
   title: string;
   content: string;
+  images: string[];
   onChangeTitle: (title: string) => void;
   onChangeContent: (html: string) => void;
+  onChangeImages: (images: string[]) => void;
   autoFocusBody?: boolean;
 }
 
 export function RichTextEditor({
   title,
   content,
+  images,
   onChangeTitle,
   onChangeContent,
+  onChangeImages,
   autoFocusBody = false,
 }: RichTextEditorProps) {
   const editorRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
   const historyRef = useRef<string[]>([content || '']);
   const historyIndexRef = useRef<number>(0);
   const isInternalChangeRef = useRef<boolean>(false);
@@ -41,7 +51,6 @@ export function RichTextEditor({
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
 
-  // Sync external initial content only when mounting or switching note IDs
   useEffect(() => {
     if (!editorRef.current) return;
     if (editorRef.current.innerHTML !== content && !isInternalChangeRef.current) {
@@ -69,7 +78,7 @@ export function RichTextEditor({
         orderedList: document.queryCommandState('insertOrderedList'),
       });
     } catch {
-      // Ignore queryCommandState errors when selection is outside
+      // Ignore selection errors
     }
   }, []);
 
@@ -115,6 +124,53 @@ export function RichTextEditor({
       '</div><p><br></p>';
     document.execCommand('insertHTML', false, checkHtml);
     emitChange();
+  };
+
+  const handleFilesSelected = async (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    const loaded: string[] = [];
+    for (const file of Array.from(files)) {
+      if (!file.type.startsWith('image/')) continue;
+      try {
+        const compressed = await readAndCompressImage(file);
+        loaded.push(compressed);
+      } catch {
+        // Skip unreadable image
+      }
+    }
+    if (loaded.length > 0) {
+      onChangeImages([...images, ...loaded]);
+    }
+  };
+
+  const handlePaste = async (e: React.ClipboardEvent<HTMLDivElement>) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    const imageFiles: File[] = [];
+    for (const item of Array.from(items)) {
+      if (item.type.startsWith('image/')) {
+        const f = item.getAsFile();
+        if (f) imageFiles.push(f);
+      }
+    }
+    if (imageFiles.length > 0) {
+      e.preventDefault();
+      const loaded: string[] = [];
+      for (const file of imageFiles) {
+        try {
+          loaded.push(await readAndCompressImage(file));
+        } catch {
+          // Ignore
+        }
+      }
+      if (loaded.length > 0) {
+        onChangeImages([...images, ...loaded]);
+      }
+    }
+  };
+
+  const handleRemoveImage = (index: number) => {
+    onChangeImages(images.filter((_, i) => i !== index));
   };
 
   const handleUndo = () => {
@@ -177,10 +233,34 @@ export function RichTextEditor({
 
   return (
     <div className="flex flex-col flex-1 min-h-0">
-      {/* Formatting Toolbar */}
+      {/* Hidden image file inputs */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        multiple
+        className="hidden"
+        onChange={(e) => {
+          handleFilesSelected(e.target.files);
+          e.target.value = '';
+        }}
+      />
+      <input
+        ref={cameraInputRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        className="hidden"
+        onChange={(e) => {
+          handleFilesSelected(e.target.files);
+          e.target.value = '';
+        }}
+      />
+
+      {/* Formatting & Image Toolbar */}
       <div className="sticky top-[57px] z-20 bg-[#F8F7F5]/95 dark:bg-[#171717]/95 backdrop-blur-sm border-b border-[#EEEEEC] dark:border-[#2E2E2B] px-4 sm:px-6 py-2">
         <div className="flex items-center justify-between gap-1 overflow-x-auto no-scrollbar">
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-0.5 sm:gap-1">
             <button
               type="button"
               onMouseDown={(e) => {
@@ -260,9 +340,31 @@ export function RichTextEditor({
             >
               <CheckSquare className="h-4 w-4" strokeWidth={2} />
             </button>
+
+            <div className="mx-1 h-4 w-px bg-[#EEEEEC] dark:bg-[#2E2E2B]" />
+
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              aria-label="Add image"
+              title="Add image"
+              className={toolbarBtnClass(false)}
+            >
+              <ImagePlus className="h-4 w-4" strokeWidth={2} />
+            </button>
+
+            <button
+              type="button"
+              onClick={() => cameraInputRef.current?.click()}
+              aria-label="Take photo"
+              title="Take photo"
+              className={toolbarBtnClass(false)}
+            >
+              <Camera className="h-4 w-4" strokeWidth={2} />
+            </button>
           </div>
 
-          <div className="flex items-center gap-1 shrink-0">
+          <div className="flex items-center gap-0.5 sm:gap-1 shrink-0">
             <button
               type="button"
               onMouseDown={(e) => {
@@ -294,7 +396,7 @@ export function RichTextEditor({
         </div>
       </div>
 
-      {/* Distraction-free writing area */}
+      {/* Distraction-free writing & media area */}
       <div className="flex-1 px-4 sm:px-8 pt-6 pb-20">
         <input
           type="text"
@@ -314,9 +416,37 @@ export function RichTextEditor({
           onKeyUp={updateToolbarState}
           onMouseUp={updateToolbarState}
           onClick={handleEditorClick}
+          onPaste={handlePaste}
           aria-label="Note content"
-          className="note-content mt-4 min-h-[52vh] text-[15.5px] sm:text-base text-[#202124] dark:text-[#F4F4F2] focus:outline-none"
+          className="note-content mt-4 min-h-[260px] text-[15.5px] sm:text-base text-[#202124] dark:text-[#F4F4F2] focus:outline-none"
         />
+
+        {/* Attached Images Grid */}
+        {images.length > 0 && (
+          <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {images.map((src, idx) => (
+              <div
+                key={`${idx}_${src.slice(0, 32)}`}
+                className="relative overflow-hidden rounded-2xl bg-white dark:bg-[#222222] border border-[#EEEEEC] dark:border-[#2E2E2B]"
+              >
+                <img
+                  src={src}
+                  alt={`Note attachment ${idx + 1}`}
+                  referrerPolicy="no-referrer"
+                  className="w-full max-h-72 object-cover"
+                />
+                <button
+                  type="button"
+                  onClick={() => handleRemoveImage(idx)}
+                  aria-label="Remove image"
+                  className="absolute top-2.5 right-2.5 flex h-8 w-8 items-center justify-center rounded-full bg-[#202124]/80 text-white hover:bg-[#E45B5B] transition-colors cursor-pointer"
+                >
+                  <X className="h-4 w-4" strokeWidth={2.2} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

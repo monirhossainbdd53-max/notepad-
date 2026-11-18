@@ -10,6 +10,7 @@ import {
   Share2,
   Star,
   Trash2,
+  X,
 } from 'lucide-react';
 import { ConfirmDialog, FolderPickerDialog, InfoSheetDialog } from '../components/ConfirmDialog';
 import { NavigationShell } from '../components/NavigationShell';
@@ -43,6 +44,7 @@ export function NoteDetailsScreen() {
   const [folderPickerOpen, setFolderPickerOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -74,6 +76,7 @@ export function NoteDetailsScreen() {
 
   const folder = getFolderById(note.folderId);
   const words = countWords(note.content);
+  const images = note.images ?? [];
 
   const handleContentClick = (e: React.MouseEvent<HTMLDivElement>) => {
     const target = e.target as HTMLElement;
@@ -247,9 +250,32 @@ export function NoteDetailsScreen() {
             dangerouslySetInnerHTML={{
               __html:
                 note.content ||
-                '<p style="color:#858585;">This note is empty. Tap Edit to start writing.</p>',
+                (images.length > 0
+                  ? ''
+                  : '<p style="color:#858585;">This note is empty. Tap Edit to start writing.</p>'),
             }}
           />
+
+          {/* Attached Images */}
+          {images.length > 0 && (
+            <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {images.map((src, idx) => (
+                <button
+                  key={`${idx}_${src.slice(0, 28)}`}
+                  type="button"
+                  onClick={() => setLightboxSrc(src)}
+                  className="overflow-hidden rounded-2xl bg-white dark:bg-[#222222] border border-[#EEEEEC] dark:border-[#2E2E2B] text-left cursor-pointer hover:border-[#D9A928]/70 transition-colors"
+                >
+                  <img
+                    src={src}
+                    alt={`${note.title || 'Note'} attachment ${idx + 1}`}
+                    referrerPolicy="no-referrer"
+                    className="w-full max-h-80 object-cover"
+                  />
+                </button>
+              ))}
+            </div>
+          )}
         </article>
 
         {/* Floating Edit Action Button */}
@@ -261,6 +287,32 @@ export function NoteDetailsScreen() {
         >
           <Edit3 className="h-5 w-5" strokeWidth={2} />
         </button>
+
+        {/* Fullscreen Image Preview Lightbox */}
+        {lightboxSrc && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-4"
+            onClick={() => setLightboxSrc(null)}
+            role="dialog"
+            aria-modal="true"
+          >
+            <button
+              type="button"
+              onClick={() => setLightboxSrc(null)}
+              aria-label="Close preview"
+              className="absolute top-4 right-4 flex h-11 w-11 items-center justify-center rounded-full bg-white/15 text-white hover:bg-white/25 cursor-pointer"
+            >
+              <X className="h-5 w-5" />
+            </button>
+            <img
+              src={lightboxSrc}
+              alt="Full preview"
+              referrerPolicy="no-referrer"
+              onClick={(e) => e.stopPropagation()}
+              className="max-h-[88vh] max-w-full rounded-2xl object-contain"
+            />
+          </div>
+        )}
 
         <FolderPickerDialog
           open={folderPickerOpen}

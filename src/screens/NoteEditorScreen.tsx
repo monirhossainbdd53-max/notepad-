@@ -39,6 +39,7 @@ export function NoteEditorScreen({ mode }: NoteEditorScreenProps) {
 
   const [title, setTitle] = useState(note?.title ?? '');
   const [content, setContent] = useState(note?.content ?? '');
+  const [images, setImages] = useState<string[]>(note?.images ?? []);
   const [saveState, setSaveState] = useState<'saved' | 'saving'>('saved');
   const [menuOpen, setMenuOpen] = useState(false);
   const [folderPickerOpen, setFolderPickerOpen] = useState(false);
@@ -51,6 +52,7 @@ export function NoteEditorScreen({ mode }: NoteEditorScreenProps) {
     if (note) {
       setTitle(note.title);
       setContent(note.content);
+      setImages(note.images ?? []);
     }
   }, [note?.id]);
 
@@ -87,37 +89,43 @@ export function NoteEditorScreen({ mode }: NoteEditorScreenProps) {
     );
   }
 
-  const scheduleAutoSave = (nextTitle: string, nextContent: string) => {
+  const scheduleAutoSave = (nextTitle: string, nextContent: string, nextImages: string[]) => {
     setSaveState('saving');
     if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
     saveTimerRef.current = window.setTimeout(() => {
-      updateNote(note.id, { title: nextTitle, content: nextContent });
+      updateNote(note.id, { title: nextTitle, content: nextContent, images: nextImages });
       setSaveState('saved');
     }, 280);
   };
 
   const handleTitleChange = (nextTitle: string) => {
     setTitle(nextTitle);
-    scheduleAutoSave(nextTitle, content);
+    scheduleAutoSave(nextTitle, content, images);
   };
 
   const handleContentChange = (nextContent: string) => {
     setContent(nextContent);
-    scheduleAutoSave(title, nextContent);
+    scheduleAutoSave(title, nextContent, images);
+  };
+
+  const handleImagesChange = (nextImages: string[]) => {
+    setImages(nextImages);
+    scheduleAutoSave(title, content, nextImages);
   };
 
   const handleBackOrDone = () => {
     if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
     const emptyTitle = !title.trim();
     const emptyContent = !content.replace(/<[^>]*>/g, '').trim();
+    const emptyImages = images.length === 0;
 
-    if (mode === 'create' && emptyTitle && emptyContent) {
+    if (mode === 'create' && emptyTitle && emptyContent && emptyImages) {
       permanentlyDeleteNote(note.id);
       goBack();
       return;
     }
 
-    updateNote(note.id, { title, content });
+    updateNote(note.id, { title, content, images });
     setSaveState('saved');
     goBack();
   };
@@ -255,8 +263,10 @@ export function NoteEditorScreen({ mode }: NoteEditorScreenProps) {
         <RichTextEditor
           title={title}
           content={content}
+          images={images}
           onChangeTitle={handleTitleChange}
           onChangeContent={handleContentChange}
+          onChangeImages={handleImagesChange}
           autoFocusBody={mode === 'create'}
         />
 

@@ -331,6 +331,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         id: generateId('note'),
         title: partial?.title ?? '',
         content: partial?.content ?? '',
+        images: partial?.images ?? [],
         folderId: targetFolder,
         isPinned: partial?.isPinned ?? false,
         isFavorite: partial?.isFavorite ?? false,

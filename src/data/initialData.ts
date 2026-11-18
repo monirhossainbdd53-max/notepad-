@@ -21,6 +21,7 @@ export const INITIAL_NOTES: Note[] = [
       '<div class="note-check-item" data-checked="false"><span class="note-check-box" role="checkbox" aria-checked="false" tabindex="0"></span><span class="note-check-text">Compare matte white oak samples</span></div>' +
       '<div class="note-check-item" data-checked="false"><span class="note-check-box" role="checkbox" aria-checked="false" tabindex="0"></span><span class="note-check-text">Finalize brushed brass hardware finish</span></div>' +
       '<p>Keep lighting warm around 2700K across the dining pendant and recessed fixtures.</p>',
+    images: ['/src/assets/images/renovation_living_room_1795037423355.jpg'],
     folderId: 'folder_personal',
     isPinned: true,
     isFavorite: true,

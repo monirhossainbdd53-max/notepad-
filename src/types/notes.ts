@@ -28,6 +28,7 @@ export interface Note {
   id: string;
   title: string;
   content: string;
+  images?: string[];
   folderId: string;
   isPinned: boolean;
   isFavorite: boolean;
