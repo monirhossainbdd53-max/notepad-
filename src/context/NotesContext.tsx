@@ -6,10 +6,12 @@ import {
   INITIAL_RECENT_SEARCHES,
 } from '../data/initialData';
 import {
+  FREE_LIMITS,
   Folder,
   Note,
   NotificationSettings,
   ScreenName,
+  ThemePalette,
   ThemePreference,
   ToastMessage,
   UserAccount,
@@ -22,6 +24,9 @@ interface PersistedState {
   notes: Note[];
   folders: Folder[];
   theme: ThemePreference;
+  palette: ThemePalette;
+  isPremium: boolean;
+  notePin: string | null;
   defaultFolderId: string;
   notifications: NotificationSettings;
   account: UserAccount;
@@ -53,6 +58,22 @@ interface NotesContextValue {
   theme: ThemePreference;
   resolvedTheme: 'light' | 'dark';
   setTheme: (theme: ThemePreference) => void;
+  palette: ThemePalette;
+  setPalette: (palette: ThemePalette) => void;
+  isPremium: boolean;
+  setIsPremium: (value: boolean) => void;
+  canCreateNote: boolean;
+  canCreateFolder: boolean;
+  maxImagesAllowed: number;
+  upgradePromptReason: string | null;
+  requestUpgrade: (reason: string) => void;
+  dismissUpgradePrompt: () => void;
+  notePin: string | null;
+  setNotePin: (pin: string | null) => void;
+  unlockedNoteIds: string[];
+  unlockNoteSession: (noteId: string) => void;
+  lockNoteSession: (noteId: string) => void;
+  toggleLockNote: (noteId: string) => void;
   defaultFolderId: string;
   setDefaultFolderId: (folderId: string) => void;
   notifications: NotificationSettings;
@@ -64,7 +85,7 @@ interface NotesContextValue {
   clearRecentSearches: () => void;
   hasOnboarded: boolean;
   completeOnboarding: () => void;
-  createNote: (partial?: Partial<Note>) => Note;
+  createNote: (partial?: Partial<Note>) => Note | null;
   updateNote: (id: string, patch: Partial<Note>) => void;
   togglePinNote: (id: string) => void;
   toggleFavoriteNote: (id: string) => void;
@@ -75,7 +96,7 @@ interface NotesContextValue {
   restoreDeletedNote: (id: string) => void;
   permanentlyDeleteNote: (id: string) => void;
   emptyTrash: () => void;
-  createFolder: (name: string) => Folder;
+  createFolder: (name: string) => Folder | null;
   renameFolder: (id: string, name: string) => void;
   deleteFolder: (id: string) => void;
   getFolderById: (id: string) => Folder | undefined;
@@ -91,6 +112,9 @@ const defaultPersistedState: PersistedState = {
   notes: INITIAL_NOTES,
   folders: DEFAULT_FOLDERS,
   theme: 'light',
+  palette: 'default',
+  isPremium: false,
+  notePin: null,
   defaultFolderId: 'folder_personal',
   notifications: {
     dailyReminder: false,
@@ -114,6 +138,9 @@ function loadInitialState(): PersistedState {
           ? parsed.folders
           : defaultPersistedState.folders,
       theme: parsed.theme || 'light',
+      palette: parsed.palette || 'default',
+      isPremium: Boolean(parsed.isPremium),
+      notePin: typeof parsed.notePin === 'string' ? parsed.notePin : null,
       defaultFolderId: parsed.defaultFolderId || 'folder_personal',
       notifications: {
         ...defaultPersistedState.notifications,
@@ -147,6 +174,12 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   const [notes, setNotes] = useState<Note[]>(initial.notes);
   const [folders, setFolders] = useState<Folder[]>(initial.folders);
   const [theme, setThemeState] = useState<ThemePreference>(initial.theme);
+  const [palette, setPaletteState] = useState<ThemePalette>(initial.palette);
+  const [isPremium, setIsPremiumState] = useState<boolean>(initial.isPremium);
+  const [notePin, setNotePinState] = useState<string | null>(initial.notePin);
+  const [unlockedNoteIds, setUnlockedNoteIds] = useState<string[]>([]);
+  const [upgradePromptReason, setUpgradePromptReason] = useState<string | null>(null);
+
   const [systemDark, setSystemDark] = useState<boolean>(() => {
     if (typeof window === 'undefined') return false;
     return window.matchMedia('(prefers-color-scheme: dark)').matches;
@@ -172,13 +205,15 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   const activeNoteId = currentEntry.noteId;
   const activeFolderId = currentEntry.folderId;
 
-  // Persist state to localStorage
   useEffect(() => {
     try {
       const payload: PersistedState = {
         notes,
         folders,
         theme,
+        palette,
+        isPremium,
+        notePin,
         defaultFolderId,
         notifications,
         account,
@@ -189,9 +224,20 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     } catch {
       // Ignore storage quota errors
     }
-  }, [notes, folders, theme, defaultFolderId, notifications, account, recentSearches, hasOnboarded]);
+  }, [
+    notes,
+    folders,
+    theme,
+    palette,
+    isPremium,
+    notePin,
+    defaultFolderId,
+    notifications,
+    account,
+    recentSearches,
+    hasOnboarded,
+  ]);
 
-  // Listen to system dark mode changes
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const mq = window.matchMedia('(prefers-color-scheme: dark)');
@@ -203,7 +249,6 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   const resolvedTheme: 'light' | 'dark' =
     theme === 'system' ? (systemDark ? 'dark' : 'light') : theme;
 
-  // Apply .dark class to <html>
   useEffect(() => {
     const root = document.documentElement;
     if (resolvedTheme === 'dark') {
@@ -213,7 +258,17 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     }
   }, [resolvedTheme]);
 
-  // Auto-dismiss toast
+  // Sync active palette to <html>; if user downgrades to Free, revert visual palette to default cleanly
+  useEffect(() => {
+    const root = document.documentElement;
+    const activePalette = isPremium ? palette : 'default';
+    if (activePalette === 'default') {
+      root.removeAttribute('data-palette');
+    } else {
+      root.setAttribute('data-palette', activePalette);
+    }
+  }, [isPremium, palette]);
+
   useEffect(() => {
     if (!toast) return;
     const timer = window.setTimeout(() => setToast(null), 2600);
@@ -226,6 +281,29 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
 
   const dismissToast = useCallback(() => setToast(null), []);
 
+  const requestUpgrade = useCallback((reason: string) => {
+    setUpgradePromptReason(reason);
+  }, []);
+
+  const dismissUpgradePrompt = useCallback(() => {
+    setUpgradePromptReason(null);
+  }, []);
+
+  const activeNotes = useMemo(
+    () =>
+      notes
+        .filter((n) => !n.isArchived && !n.isDeleted)
+        .sort((a, b) => {
+          if (a.isPinned !== b.isPinned) return a.isPinned ? -1 : 1;
+          return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+        }),
+    [notes]
+  );
+
+  const canCreateNote = isPremium || activeNotes.length < FREE_LIMITS.maxActiveNotes;
+  const canCreateFolder = isPremium || folders.length < FREE_LIMITS.maxFolders;
+  const maxImagesAllowed = isPremium ? Number.POSITIVE_INFINITY : FREE_LIMITS.maxImagesPerNote;
+
   const navigate = useCallback((next: ScreenName, options?: NavigateOptions) => {
     setHistory((prev) => {
       const current = prev[prev.length - 1];
@@ -235,7 +313,6 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         folderId: options?.folderId !== undefined ? options.folderId : current.folderId,
       };
 
-      // Top-level tabs reset deep stack cleanly
       const topTabs: ScreenName[] = ['home', 'folders', 'favorites', 'settings'];
       if (topTabs.includes(next) && !options?.replace) {
         return [{ screen: next, noteId: null, folderId: null }];
@@ -245,7 +322,6 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         return [...prev.slice(0, -1), nextEntry];
       }
 
-      // Avoid pushing identical duplicate screen
       if (
         current.screen === nextEntry.screen &&
         current.noteId === nextEntry.noteId &&
@@ -284,6 +360,69 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     setThemeState(nextTheme);
   }, []);
 
+  const setPalette = useCallback(
+    (nextPalette: ThemePalette) => {
+      if (nextPalette !== 'default' && !isPremium) {
+        requestUpgrade('Premium themes require a Notes Premium subscription.');
+        return;
+      }
+      setPaletteState(nextPalette);
+    },
+    [isPremium, requestUpgrade]
+  );
+
+  const setIsPremium = useCallback(
+    (value: boolean) => {
+      setIsPremiumState(value);
+      showToast(value ? 'Previewing Premium plan' : 'Previewing Free plan');
+    },
+    [showToast]
+  );
+
+  const setNotePin = useCallback(
+    (pin: string | null) => {
+      setNotePinState(pin);
+      if (pin) {
+        showToast('Note Lock PIN saved');
+      } else {
+        setNotes((prev) => prev.map((n) => ({ ...n, isLocked: false })));
+        showToast('Note Lock PIN removed');
+      }
+    },
+    [showToast]
+  );
+
+  const unlockNoteSession = useCallback((noteId: string) => {
+    setUnlockedNoteIds((prev) => (prev.includes(noteId) ? prev : [...prev, noteId]));
+  }, []);
+
+  const lockNoteSession = useCallback((noteId: string) => {
+    setUnlockedNoteIds((prev) => prev.filter((id) => id !== noteId));
+  }, []);
+
+  const toggleLockNote = useCallback(
+    (noteId: string) => {
+      if (!isPremium) {
+        requestUpgrade('Secure Note Lock with 4-digit PIN is a Notes Premium feature.');
+        return;
+      }
+      setNotes((prev) =>
+        prev.map((n) => {
+          if (n.id !== noteId) return n;
+          const nextLocked = !n.isLocked;
+          if (!nextLocked) {
+            setUnlockedNoteIds((u) => u.filter((id) => id !== noteId));
+          } else {
+            setUnlockedNoteIds((u) => (u.includes(noteId) ? u : [...u, noteId]));
+          }
+          showToast(nextLocked ? 'Note locked with PIN' : 'Note lock removed');
+          return { ...n, isLocked: nextLocked };
+        })
+      );
+    },
+    [isPremium, requestUpgrade, showToast]
+  );
+
   const setDefaultFolderId = useCallback(
     (folderId: string) => {
       setDefaultFolderIdState(folderId);
@@ -318,7 +457,14 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const createNote = useCallback(
-    (partial?: Partial<Note>): Note => {
+    (partial?: Partial<Note>): Note | null => {
+      if (!isPremium && activeNotes.length >= FREE_LIMITS.maxActiveNotes) {
+        requestUpgrade(
+          `You have reached the Free plan limit of ${FREE_LIMITS.maxActiveNotes} active notes. Upgrade to Notes Premium for unlimited notes.`
+        );
+        return null;
+      }
+
       const nowIso = new Date().toISOString();
       const targetFolder =
         partial?.folderId && folders.some((f) => f.id === partial.folderId)
@@ -335,6 +481,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         folderId: targetFolder,
         isPinned: partial?.isPinned ?? false,
         isFavorite: partial?.isFavorite ?? false,
+        isLocked: false,
         isArchived: false,
         isDeleted: false,
         createdAt: nowIso,
@@ -343,7 +490,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       setNotes((prev) => [newNote, ...prev]);
       return newNote;
     },
-    [defaultFolderId, folders]
+    [activeNotes.length, defaultFolderId, folders, isPremium, requestUpgrade]
   );
 
   const updateNote = useCallback((id: string, patch: Partial<Note>) => {
@@ -487,7 +634,13 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   }, [showToast]);
 
   const createFolder = useCallback(
-    (name: string): Folder => {
+    (name: string): Folder | null => {
+      if (!isPremium && folders.length >= FREE_LIMITS.maxFolders) {
+        requestUpgrade(
+          `Free plan supports up to ${FREE_LIMITS.maxFolders} folders. Upgrade to Notes Premium for unlimited folders.`
+        );
+        return null;
+      }
       const trimmed = name.trim() || 'Untitled Folder';
       const newFolder: Folder = {
         id: generateId('folder'),
@@ -498,7 +651,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       showToast(`Folder "${trimmed}" created`);
       return newFolder;
     },
-    [showToast]
+    [folders.length, isPremium, requestUpgrade, showToast]
   );
 
   const renameFolder = useCallback(
@@ -533,29 +686,14 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     setAccount(INITIAL_ACCOUNT);
     setRecentSearches(INITIAL_RECENT_SEARCHES);
     setDefaultFolderIdState('folder_personal');
+    setPaletteState('default');
+    setNotePinState(null);
+    setUnlockedNoteIds([]);
     showToast('Workspace reset to defaults');
   }, [showToast]);
 
-  const activeNotes = useMemo(
-    () =>
-      notes
-        .filter((n) => !n.isArchived && !n.isDeleted)
-        .sort((a, b) => {
-          if (a.isPinned !== b.isPinned) return a.isPinned ? -1 : 1;
-          return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
-        }),
-    [notes]
-  );
-
-  const pinnedNotes = useMemo(
-    () => activeNotes.filter((n) => n.isPinned),
-    [activeNotes]
-  );
-
-  const favoriteNotes = useMemo(
-    () => activeNotes.filter((n) => n.isFavorite),
-    [activeNotes]
-  );
+  const pinnedNotes = useMemo(() => activeNotes.filter((n) => n.isPinned), [activeNotes]);
+  const favoriteNotes = useMemo(() => activeNotes.filter((n) => n.isFavorite), [activeNotes]);
 
   const archivedNotes = useMemo(
     () =>
@@ -608,6 +746,22 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     theme,
     resolvedTheme,
     setTheme,
+    palette,
+    setPalette,
+    isPremium,
+    setIsPremium,
+    canCreateNote,
+    canCreateFolder,
+    maxImagesAllowed,
+    upgradePromptReason,
+    requestUpgrade,
+    dismissUpgradePrompt,
+    notePin,
+    setNotePin,
+    unlockedNoteIds,
+    unlockNoteSession,
+    lockNoteSession,
+    toggleLockNote,
     defaultFolderId,
     setDefaultFolderId,
     notifications,

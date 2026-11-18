@@ -5,15 +5,18 @@ import {
   Copy,
   Edit3,
   FolderInput,
+  Lock,
   MoreHorizontal,
   Pin,
   Share2,
   Star,
   Trash2,
+  Unlock,
   X,
 } from 'lucide-react';
 import { ConfirmDialog, FolderPickerDialog, InfoSheetDialog } from '../components/ConfirmDialog';
 import { NavigationShell } from '../components/NavigationShell';
+import { PinDialog } from '../components/PinDialog';
 import { useNotes } from '../context/NotesContext';
 import {
   countWords,
@@ -31,6 +34,14 @@ export function NoteDetailsScreen() {
     updateNote,
     togglePinNote,
     toggleFavoriteNote,
+    toggleLockNote,
+    notePin,
+    setNotePin,
+    unlockedNoteIds,
+    unlockNoteSession,
+    lockNoteSession,
+    isPremium,
+    requestUpgrade,
     moveNoteToFolder,
     archiveNote,
     deleteNote,
@@ -45,6 +56,8 @@ export function NoteDetailsScreen() {
   const [shareOpen, setShareOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
+  const [pinVerifyOpen, setPinVerifyOpen] = useState(false);
+  const [pinCreateOpen, setPinCreateOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -61,14 +74,62 @@ export function NoteDetailsScreen() {
     return (
       <NavigationShell showMobileTabs={false}>
         <div className="p-8 text-center">
-          <p className="text-sm text-[#858585]">Note not found.</p>
+          <p className="text-sm text-[var(--text-secondary)]">Note not found.</p>
           <button
             type="button"
             onClick={() => navigate('home')}
-            className="mt-4 min-h-[44px] rounded-full bg-[#202124] dark:bg-[#D9A928] px-5 text-sm font-semibold text-white dark:text-[#171717] cursor-pointer"
+            className="mt-4 min-h-[44px] rounded-full bg-[var(--text-primary)] dark:bg-[var(--accent-primary)] px-5 text-sm font-semibold text-[var(--bg-card)] dark:text-[#171717] cursor-pointer"
           >
             Back to Notes
           </button>
+        </div>
+      </NavigationShell>
+    );
+  }
+
+  const requiresPinUnlock = Boolean(note.isLocked && notePin && !unlockedNoteIds.includes(note.id));
+
+  if (requiresPinUnlock) {
+    return (
+      <NavigationShell showMobileTabs={false}>
+        <div className="min-h-screen flex flex-col bg-[var(--bg-canvas)]">
+          <header className="sticky top-0 z-30 flex h-[57px] items-center bg-[var(--bg-canvas)]/95 border-b border-[var(--divider)] px-3 sm:px-6">
+            <button
+              type="button"
+              onClick={goBack}
+              aria-label="Back"
+              className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-full text-[var(--text-primary)] hover:bg-[var(--bg-subtle)] cursor-pointer"
+            >
+              <ChevronLeft className="h-5 w-5" strokeWidth={2} />
+            </button>
+          </header>
+
+          <div className="flex-1 flex flex-col items-center justify-center px-6 text-center">
+            <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-[var(--accent-soft)] text-[var(--accent-primary)]">
+              <Lock className="h-7 w-7" strokeWidth={1.85} />
+            </div>
+            <h1 className="mt-5 text-xl font-bold text-[var(--text-primary)]">
+              {note.title.trim() || 'Locked Note'}
+            </h1>
+            <p className="mt-1.5 text-sm text-[var(--text-secondary)] max-w-xs">
+              This note is protected. Enter your 4-digit PIN to read or edit its contents.
+            </p>
+            <button
+              type="button"
+              onClick={() => setPinVerifyOpen(true)}
+              className="mt-6 min-h-[46px] rounded-full bg-[var(--text-primary)] dark:bg-[var(--accent-primary)] px-6 text-sm font-semibold text-[var(--bg-card)] dark:text-[#171717] cursor-pointer"
+            >
+              Unlock Note
+            </button>
+          </div>
+
+          <PinDialog
+            open={pinVerifyOpen}
+            mode="verify"
+            expectedPin={notePin}
+            onSuccess={() => unlockNoteSession(note.id)}
+            onClose={() => setPinVerifyOpen(false)}
+          />
         </div>
       </NavigationShell>
     );
@@ -91,6 +152,19 @@ export function NoteDetailsScreen() {
     }
   };
 
+  const handleToggleLock = () => {
+    setMenuOpen(false);
+    if (!isPremium) {
+      requestUpgrade('Secure Note Lock with 4-digit PIN is a Notes Premium feature.');
+      return;
+    }
+    if (!notePin) {
+      setPinCreateOpen(true);
+      return;
+    }
+    toggleLockNote(note.id);
+  };
+
   const handleCopyNote = async () => {
     const plain = `${note.title || 'Untitled Note'}\n\n${stripHtmlToText(note.content)}`;
     try {
@@ -104,31 +178,48 @@ export function NoteDetailsScreen() {
 
   return (
     <NavigationShell showMobileTabs={false}>
-      <div className="min-h-screen flex flex-col bg-[#F8F7F5] dark:bg-[#171717]">
+      <div className="min-h-screen flex flex-col bg-[var(--bg-canvas)]">
         {/* Header */}
-        <header className="sticky top-0 z-30 flex h-[57px] items-center justify-between bg-[#F8F7F5]/95 dark:bg-[#171717]/95 backdrop-blur-md border-b border-[#EEEEEC] dark:border-[#2E2E2B] px-3 sm:px-6">
+        <header className="sticky top-0 z-30 flex h-[57px] items-center justify-between bg-[var(--bg-canvas)]/95 backdrop-blur-md border-b border-[var(--divider)] px-3 sm:px-6">
           <button
             type="button"
             onClick={goBack}
             aria-label="Back"
-            className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-full text-[#202124] dark:text-[#F4F4F2] hover:bg-[#EEEEEC]/70 dark:hover:bg-[#222222] cursor-pointer"
+            className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-full text-[var(--text-primary)] hover:bg-[var(--bg-subtle)] cursor-pointer"
           >
             <ChevronLeft className="h-5 w-5" strokeWidth={2} />
           </button>
 
           <div className="flex items-center gap-1">
+            {note.isLocked && (
+              <button
+                type="button"
+                onClick={() => {
+                  lockNoteSession(note.id);
+                  showToast('Note locked');
+                }}
+                aria-label="Lock note now"
+                title="Lock note now"
+                className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-full text-[var(--accent-primary)] hover:bg-[var(--bg-subtle)] cursor-pointer"
+              >
+                <Lock className="h-[18px] w-[18px]" strokeWidth={1.9} />
+              </button>
+            )}
+
             <button
               type="button"
               onClick={() => togglePinNote(note.id)}
               aria-label={note.isPinned ? 'Unpin note' : 'Pin note'}
               className={`min-h-[44px] min-w-[44px] flex items-center justify-center rounded-full transition-colors cursor-pointer ${
                 note.isPinned
-                  ? 'text-[#D9A928]'
-                  : 'text-[#858585] hover:text-[#202124] dark:hover:text-[#F4F4F2]'
+                  ? 'text-[var(--accent-primary)]'
+                  : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
               }`}
             >
               <Pin
-                className={`h-[18px] w-[18px] ${note.isPinned ? 'fill-[#D9A928]' : ''}`}
+                className={`h-[18px] w-[18px] ${
+                  note.isPinned ? 'fill-[var(--accent-primary)]' : ''
+                }`}
                 strokeWidth={1.9}
               />
             </button>
@@ -139,12 +230,14 @@ export function NoteDetailsScreen() {
               aria-label={note.isFavorite ? 'Remove from favorites' : 'Add to favorites'}
               className={`min-h-[44px] min-w-[44px] flex items-center justify-center rounded-full transition-colors cursor-pointer ${
                 note.isFavorite
-                  ? 'text-[#D9A928]'
-                  : 'text-[#858585] hover:text-[#202124] dark:hover:text-[#F4F4F2]'
+                  ? 'text-[var(--accent-primary)]'
+                  : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
               }`}
             >
               <Star
-                className={`h-[18px] w-[18px] ${note.isFavorite ? 'fill-[#D9A928]' : ''}`}
+                className={`h-[18px] w-[18px] ${
+                  note.isFavorite ? 'fill-[var(--accent-primary)]' : ''
+                }`}
                 strokeWidth={1.9}
               />
             </button>
@@ -153,7 +246,7 @@ export function NoteDetailsScreen() {
               type="button"
               onClick={() => setShareOpen(true)}
               aria-label="Share note"
-              className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-full text-[#858585] hover:text-[#202124] dark:hover:text-[#F4F4F2] cursor-pointer"
+              className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-full text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
             >
               <Share2 className="h-[18px] w-[18px]" strokeWidth={1.9} />
             </button>
@@ -163,23 +256,41 @@ export function NoteDetailsScreen() {
                 type="button"
                 onClick={() => setMenuOpen((v) => !v)}
                 aria-label="More options"
-                className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-full text-[#202124] dark:text-[#F4F4F2] hover:bg-[#EEEEEC]/70 dark:hover:bg-[#222222] cursor-pointer"
+                className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-full text-[var(--text-primary)] hover:bg-[var(--bg-subtle)] cursor-pointer"
               >
                 <MoreHorizontal className="h-5 w-5" strokeWidth={1.9} />
               </button>
 
               {menuOpen && (
-                <div className="absolute right-0 mt-1.5 w-52 rounded-2xl bg-white dark:bg-[#222222] border border-[#EEEEEC] dark:border-[#2E2E2B] py-1.5 z-40">
+                <div className="absolute right-0 mt-1.5 w-52 rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] py-1.5 z-40">
                   <button
                     type="button"
                     onClick={() => {
                       setMenuOpen(false);
                       navigate('edit-note', { noteId: note.id });
                     }}
-                    className="flex w-full min-h-[42px] items-center gap-2.5 px-4 text-sm text-[#202124] dark:text-[#F4F4F2] hover:bg-[#F8F7F5] dark:hover:bg-[#2B2B29] cursor-pointer"
+                    className="flex w-full min-h-[42px] items-center gap-2.5 px-4 text-sm text-[var(--text-primary)] hover:bg-[var(--bg-subtle)] cursor-pointer"
                   >
-                    <Edit3 className="h-4 w-4 text-[#858585]" strokeWidth={1.8} />
+                    <Edit3 className="h-4 w-4 text-[var(--text-secondary)]" strokeWidth={1.8} />
                     Edit Note
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleToggleLock}
+                    className="flex w-full min-h-[42px] items-center justify-between px-4 text-sm text-[var(--text-primary)] hover:bg-[var(--bg-subtle)] cursor-pointer"
+                  >
+                    <span className="flex items-center gap-2.5">
+                      {note.isLocked ? (
+                        <Unlock className="h-4 w-4 text-[var(--accent-primary)]" strokeWidth={1.8} />
+                      ) : (
+                        <Lock className="h-4 w-4 text-[var(--text-secondary)]" strokeWidth={1.8} />
+                      )}
+                      {note.isLocked ? 'Remove Lock' : 'Lock Note'}
+                    </span>
+                    {!isPremium && (
+                      <Lock className="h-3.5 w-3.5 text-[var(--accent-primary)]" />
+                    )}
                   </button>
 
                   <button
@@ -188,9 +299,9 @@ export function NoteDetailsScreen() {
                       setMenuOpen(false);
                       setFolderPickerOpen(true);
                     }}
-                    className="flex w-full min-h-[42px] items-center gap-2.5 px-4 text-sm text-[#202124] dark:text-[#F4F4F2] hover:bg-[#F8F7F5] dark:hover:bg-[#2B2B29] cursor-pointer"
+                    className="flex w-full min-h-[42px] items-center gap-2.5 px-4 text-sm text-[var(--text-primary)] hover:bg-[var(--bg-subtle)] cursor-pointer"
                   >
-                    <FolderInput className="h-4 w-4 text-[#858585]" strokeWidth={1.8} />
+                    <FolderInput className="h-4 w-4 text-[var(--text-secondary)]" strokeWidth={1.8} />
                     Move to Folder
                   </button>
 
@@ -201,9 +312,9 @@ export function NoteDetailsScreen() {
                       archiveNote(note.id);
                       navigate('home');
                     }}
-                    className="flex w-full min-h-[42px] items-center gap-2.5 px-4 text-sm text-[#202124] dark:text-[#F4F4F2] hover:bg-[#F8F7F5] dark:hover:bg-[#2B2B29] cursor-pointer"
+                    className="flex w-full min-h-[42px] items-center gap-2.5 px-4 text-sm text-[var(--text-primary)] hover:bg-[var(--bg-subtle)] cursor-pointer"
                   >
-                    <Archive className="h-4 w-4 text-[#858585]" strokeWidth={1.8} />
+                    <Archive className="h-4 w-4 text-[var(--text-secondary)]" strokeWidth={1.8} />
                     Archive Note
                   </button>
 
@@ -213,7 +324,7 @@ export function NoteDetailsScreen() {
                       setMenuOpen(false);
                       setDeleteOpen(true);
                     }}
-                    className="flex w-full min-h-[42px] items-center gap-2.5 px-4 text-sm text-[#E45B5B] hover:bg-[#F8F7F5] dark:hover:bg-[#2B2B29] cursor-pointer"
+                    className="flex w-full min-h-[42px] items-center gap-2.5 px-4 text-sm text-[#E45B5B] hover:bg-[var(--bg-subtle)] cursor-pointer"
                   >
                     <Trash2 className="h-4 w-4" strokeWidth={1.8} />
                     Delete Note
@@ -226,11 +337,11 @@ export function NoteDetailsScreen() {
 
         {/* Note Content */}
         <article className="flex-1 px-5 sm:px-8 pt-7 pb-24 max-w-3xl w-full mx-auto">
-          <h1 className="text-2xl sm:text-[30px] font-bold tracking-tight text-[#202124] dark:text-[#F4F4F2] leading-tight text-balance">
+          <h1 className="text-2xl sm:text-[30px] font-bold tracking-tight text-[var(--text-primary)] leading-tight text-balance">
             {note.title.trim() || 'Untitled Note'}
           </h1>
 
-          <div className="mt-2.5 flex flex-wrap items-center gap-2 text-xs text-[#858585] dark:text-[#9A9A96] tabular-nums">
+          <div className="mt-2.5 flex flex-wrap items-center gap-2 text-xs text-[var(--text-secondary)] tabular-nums">
             <span>{formatFullDate(note.updatedAt)}</span>
             {folder && (
               <>
@@ -242,21 +353,20 @@ export function NoteDetailsScreen() {
             <span>{words} {words === 1 ? 'word' : 'words'}</span>
           </div>
 
-          <div className="my-5 h-px bg-[#EEEEEC] dark:bg-[#2E2E2B]" />
+          <div className="my-5 h-px bg-[var(--divider)]" />
 
           <div
             onClick={handleContentClick}
-            className="note-content text-[15.5px] sm:text-base text-[#202124] dark:text-[#F4F4F2]"
+            className="note-content text-[15.5px] sm:text-base text-[var(--text-primary)]"
             dangerouslySetInnerHTML={{
               __html:
                 note.content ||
                 (images.length > 0
                   ? ''
-                  : '<p style="color:#858585;">This note is empty. Tap Edit to start writing.</p>'),
+                  : '<p style="color:var(--text-secondary);">This note is empty. Tap Edit to start writing.</p>'),
             }}
           />
 
-          {/* Attached Images */}
           {images.length > 0 && (
             <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-3">
               {images.map((src, idx) => (
@@ -264,7 +374,7 @@ export function NoteDetailsScreen() {
                   key={`${idx}_${src.slice(0, 28)}`}
                   type="button"
                   onClick={() => setLightboxSrc(src)}
-                  className="overflow-hidden rounded-2xl bg-white dark:bg-[#222222] border border-[#EEEEEC] dark:border-[#2E2E2B] text-left cursor-pointer hover:border-[#D9A928]/70 transition-colors"
+                  className="overflow-hidden rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] text-left cursor-pointer hover:border-[var(--accent-primary)]/70 transition-colors"
                 >
                   <img
                     src={src}
@@ -283,12 +393,11 @@ export function NoteDetailsScreen() {
           type="button"
           onClick={() => navigate('edit-note', { noteId: note.id })}
           aria-label="Edit note"
-          className="fixed right-5 bottom-6 lg:right-10 lg:bottom-8 z-30 flex h-13 w-13 items-center justify-center rounded-full bg-[#202124] dark:bg-[#D9A928] text-white dark:text-[#171717] transition-transform active:scale-95 cursor-pointer"
+          className="fixed right-5 bottom-6 lg:right-10 lg:bottom-8 z-30 flex h-13 w-13 items-center justify-center rounded-full bg-[var(--text-primary)] dark:bg-[var(--accent-primary)] text-[var(--bg-card)] dark:text-[#171717] transition-transform active:scale-95 cursor-pointer"
         >
           <Edit3 className="h-5 w-5" strokeWidth={2} />
         </button>
 
-        {/* Fullscreen Image Preview Lightbox */}
         {lightboxSrc && (
           <div
             className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-4"
@@ -328,11 +437,11 @@ export function NoteDetailsScreen() {
           onClose={() => setShareOpen(false)}
         >
           <div className="space-y-4">
-            <div className="rounded-2xl bg-[#F8F7F5] dark:bg-[#171717] border border-[#EEEEEC] dark:border-[#2E2E2B] p-4">
-              <p className="font-semibold text-[#202124] dark:text-[#F4F4F2]">
+            <div className="rounded-2xl bg-[var(--bg-canvas)] border border-[var(--divider)] p-4">
+              <p className="font-semibold text-[var(--text-primary)]">
                 {note.title || 'Untitled Note'}
               </p>
-              <p className="mt-1.5 text-xs text-[#858585] dark:text-[#9A9A96] line-clamp-4">
+              <p className="mt-1.5 text-xs text-[var(--text-secondary)] line-clamp-4">
                 {stripHtmlToText(note.content) || 'No content'}
               </p>
             </div>
@@ -340,7 +449,7 @@ export function NoteDetailsScreen() {
             <button
               type="button"
               onClick={handleCopyNote}
-              className="flex w-full min-h-[46px] items-center justify-center gap-2 rounded-xl bg-[#202124] dark:bg-[#D9A928] text-sm font-semibold text-white dark:text-[#171717] cursor-pointer"
+              className="flex w-full min-h-[46px] items-center justify-center gap-2 rounded-xl bg-[var(--text-primary)] dark:bg-[var(--accent-primary)] text-sm font-semibold text-[var(--bg-card)] dark:text-[#171717] cursor-pointer"
             >
               <Copy className="h-4 w-4" strokeWidth={2} />
               Copy Plain Text
@@ -358,6 +467,16 @@ export function NoteDetailsScreen() {
             navigate('home');
           }}
           onClose={() => setDeleteOpen(false)}
+        />
+
+        <PinDialog
+          open={pinCreateOpen}
+          mode="create"
+          onSuccess={(newPin) => {
+            setNotePin(newPin);
+            toggleLockNote(note.id);
+          }}
+          onClose={() => setPinCreateOpen(false)}
         />
       </div>
     </NavigationShell>

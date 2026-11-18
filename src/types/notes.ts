@@ -22,7 +22,15 @@ export type ScreenName =
 
 export type ThemePreference = 'light' | 'dark' | 'system';
 
+export type ThemePalette = 'default' | 'sepia' | 'sage' | 'slate';
+
 export type NoteSortOption = 'updated' | 'title' | 'pinned';
+
+export const FREE_LIMITS = {
+  maxActiveNotes: 25,
+  maxFolders: 4,
+  maxImagesPerNote: 1,
+} as const;
 
 export interface Note {
   id: string;
@@ -32,6 +40,7 @@ export interface Note {
   folderId: string;
   isPinned: boolean;
   isFavorite: boolean;
+  isLocked?: boolean;
   isArchived: boolean;
   isDeleted: boolean;
   createdAt: string;

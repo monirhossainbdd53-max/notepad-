@@ -3,15 +3,20 @@ import {
   Bold,
   Camera,
   CheckSquare,
+  Heading2,
   ImagePlus,
   Italic,
   List,
   ListOrdered,
+  Lock,
+  Quote,
   Redo2,
   Underline,
   Undo2,
   X,
 } from 'lucide-react';
+import { useNotes } from '../context/NotesContext';
+import { FREE_LIMITS } from '../types/notes';
 import { readAndCompressImage } from '../utils/noteHelpers';
 
 interface RichTextEditorProps {
@@ -33,6 +38,8 @@ export function RichTextEditor({
   onChangeImages,
   autoFocusBody = false,
 }: RichTextEditorProps) {
+  const { isPremium, maxImagesAllowed, requestUpgrade } = useNotes();
+
   const editorRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
@@ -107,11 +114,19 @@ export function RichTextEditor({
     updateToolbarState();
   }, [onChangeContent, pushHistory, updateToolbarState]);
 
-  const handleFormat = (command: string) => {
+  const handleFormat = (command: string, value?: string) => {
     if (!editorRef.current) return;
     editorRef.current.focus();
-    document.execCommand(command, false);
+    document.execCommand(command, false, value);
     emitChange();
+  };
+
+  const handlePremiumFormat = (label: string, action: () => void) => {
+    if (!isPremium) {
+      requestUpgrade(`${label} is part of Advanced Note Formatting in Notes Premium.`);
+      return;
+    }
+    action();
   };
 
   const handleInsertChecklist = () => {
@@ -126,10 +141,56 @@ export function RichTextEditor({
     emitChange();
   };
 
+  const handleToggleHeading = () => {
+    if (!editorRef.current) return;
+    editorRef.current.focus();
+    const currentBlock = document.queryCommandValue('formatBlock');
+    if (currentBlock && currentBlock.toLowerCase() === 'h2') {
+      document.execCommand('formatBlock', false, 'p');
+    } else {
+      document.execCommand('formatBlock', false, 'h2');
+    }
+    emitChange();
+  };
+
+  const handleToggleBlockquote = () => {
+    if (!editorRef.current) return;
+    editorRef.current.focus();
+    const currentBlock = document.queryCommandValue('formatBlock');
+    if (currentBlock && currentBlock.toLowerCase() === 'blockquote') {
+      document.execCommand('formatBlock', false, 'p');
+    } else {
+      document.execCommand('formatBlock', false, 'blockquote');
+    }
+    emitChange();
+  };
+
+  const handleImageTrigger = (picker: 'gallery' | 'camera') => {
+    if (!isPremium && images.length >= maxImagesAllowed) {
+      requestUpgrade(
+        `Free plan allows ${FREE_LIMITS.maxImagesPerNote} image per note. Upgrade to Notes Premium for unlimited images.`
+      );
+      return;
+    }
+    if (picker === 'gallery') {
+      fileInputRef.current?.click();
+    } else {
+      cameraInputRef.current?.click();
+    }
+  };
+
   const handleFilesSelected = async (files: FileList | null) => {
     if (!files || files.length === 0) return;
+    const remainingSlots = isPremium ? files.length : Math.max(0, maxImagesAllowed - images.length);
+    if (remainingSlots <= 0) {
+      requestUpgrade(
+        `Free plan allows ${FREE_LIMITS.maxImagesPerNote} image per note. Upgrade to Notes Premium for unlimited images.`
+      );
+      return;
+    }
+
     const loaded: string[] = [];
-    for (const file of Array.from(files)) {
+    for (const file of Array.from(files).slice(0, remainingSlots)) {
       if (!file.type.startsWith('image/')) continue;
       try {
         const compressed = await readAndCompressImage(file);
@@ -140,6 +201,11 @@ export function RichTextEditor({
     }
     if (loaded.length > 0) {
       onChangeImages([...images, ...loaded]);
+      if (!isPremium && files.length > remainingSlots) {
+        requestUpgrade(
+          `Only ${FREE_LIMITS.maxImagesPerNote} image was attached on the Free plan. Upgrade for unlimited images.`
+        );
+      }
     }
   };
 
@@ -155,8 +221,14 @@ export function RichTextEditor({
     }
     if (imageFiles.length > 0) {
       e.preventDefault();
+      if (!isPremium && images.length >= maxImagesAllowed) {
+        requestUpgrade(
+          `Free plan allows ${FREE_LIMITS.maxImagesPerNote} image per note. Upgrade to Notes Premium for unlimited images.`
+        );
+        return;
+      }
       const loaded: string[] = [];
-      for (const file of imageFiles) {
+      for (const file of imageFiles.slice(0, isPremium ? imageFiles.length : 1)) {
         try {
           loaded.push(await readAndCompressImage(file));
         } catch {
@@ -223,22 +295,21 @@ export function RichTextEditor({
   };
 
   const toolbarBtnClass = (active = false, disabled = false) =>
-    `min-h-[38px] min-w-[38px] flex items-center justify-center rounded-xl transition-colors cursor-pointer ${
+    `relative min-h-[38px] min-w-[38px] flex items-center justify-center rounded-xl transition-colors cursor-pointer ${
       disabled
-        ? 'opacity-30 cursor-not-allowed text-[#858585]'
+        ? 'opacity-30 cursor-not-allowed text-[var(--text-secondary)]'
         : active
-        ? 'bg-[#FFF5D9] dark:bg-[#D9A928]/20 text-[#D9A928]'
-        : 'text-[#202124] dark:text-[#F4F4F2] hover:bg-[#F8F7F5] dark:hover:bg-[#2B2B29]'
+        ? 'bg-[var(--accent-soft)] text-[var(--accent-primary)]'
+        : 'text-[var(--text-primary)] hover:bg-[var(--bg-subtle)]'
     }`;
 
   return (
     <div className="flex flex-col flex-1 min-h-0">
-      {/* Hidden image file inputs */}
       <input
         ref={fileInputRef}
         type="file"
         accept="image/*"
-        multiple
+        multiple={isPremium}
         className="hidden"
         onChange={(e) => {
           handleFilesSelected(e.target.files);
@@ -258,9 +329,10 @@ export function RichTextEditor({
       />
 
       {/* Formatting & Image Toolbar */}
-      <div className="sticky top-[57px] z-20 bg-[#F8F7F5]/95 dark:bg-[#171717]/95 backdrop-blur-sm border-b border-[#EEEEEC] dark:border-[#2E2E2B] px-4 sm:px-6 py-2">
+      <div className="sticky top-[57px] z-20 bg-[var(--bg-canvas)]/95 backdrop-blur-sm border-b border-[var(--divider)] px-4 sm:px-6 py-2">
         <div className="flex items-center justify-between gap-1 overflow-x-auto no-scrollbar">
           <div className="flex items-center gap-0.5 sm:gap-1">
+            {/* Free Basic Formatting */}
             <button
               type="button"
               onMouseDown={(e) => {
@@ -300,8 +372,6 @@ export function RichTextEditor({
               <Underline className="h-4 w-4" strokeWidth={2} />
             </button>
 
-            <div className="mx-1 h-4 w-px bg-[#EEEEEC] dark:bg-[#2E2E2B]" />
-
             <button
               type="button"
               onMouseDown={(e) => {
@@ -315,37 +385,78 @@ export function RichTextEditor({
               <List className="h-4 w-4" strokeWidth={2} />
             </button>
 
+            <div className="mx-1 h-4 w-px bg-[var(--divider)]" />
+
+            {/* Premium Advanced Formatting */}
             <button
               type="button"
               onMouseDown={(e) => {
                 e.preventDefault();
-                handleFormat('insertOrderedList');
+                handlePremiumFormat('Heading formatting', handleToggleHeading);
+              }}
+              aria-label="Heading"
+              title={isPremium ? 'Heading' : 'Heading (Premium)'}
+              className={toolbarBtnClass(false)}
+            >
+              <Heading2 className="h-4 w-4" strokeWidth={2} />
+              {!isPremium && (
+                <Lock className="h-2.5 w-2.5 absolute bottom-1 right-1 text-[var(--accent-primary)]" />
+              )}
+            </button>
+
+            <button
+              type="button"
+              onMouseDown={(e) => {
+                e.preventDefault();
+                handlePremiumFormat('Quote blocks', handleToggleBlockquote);
+              }}
+              aria-label="Quote"
+              title={isPremium ? 'Quote' : 'Quote (Premium)'}
+              className={toolbarBtnClass(false)}
+            >
+              <Quote className="h-3.5 w-3.5" strokeWidth={2} />
+              {!isPremium && (
+                <Lock className="h-2.5 w-2.5 absolute bottom-1 right-1 text-[var(--accent-primary)]" />
+              )}
+            </button>
+
+            <button
+              type="button"
+              onMouseDown={(e) => {
+                e.preventDefault();
+                handlePremiumFormat('Numbered lists', () => handleFormat('insertOrderedList'));
               }}
               aria-label="Numbered list"
-              title="Numbered list"
+              title={isPremium ? 'Numbered list' : 'Numbered list (Premium)'}
               className={toolbarBtnClass(activeFormats.orderedList)}
             >
               <ListOrdered className="h-4 w-4" strokeWidth={2} />
+              {!isPremium && (
+                <Lock className="h-2.5 w-2.5 absolute bottom-1 right-1 text-[var(--accent-primary)]" />
+              )}
             </button>
 
             <button
               type="button"
               onMouseDown={(e) => {
                 e.preventDefault();
-                handleInsertChecklist();
+                handlePremiumFormat('Interactive checklists', handleInsertChecklist);
               }}
               aria-label="Checklist"
-              title="Checklist"
+              title={isPremium ? 'Checklist' : 'Checklist (Premium)'}
               className={toolbarBtnClass(false)}
             >
               <CheckSquare className="h-4 w-4" strokeWidth={2} />
+              {!isPremium && (
+                <Lock className="h-2.5 w-2.5 absolute bottom-1 right-1 text-[var(--accent-primary)]" />
+              )}
             </button>
 
-            <div className="mx-1 h-4 w-px bg-[#EEEEEC] dark:bg-[#2E2E2B]" />
+            <div className="mx-1 h-4 w-px bg-[var(--divider)]" />
 
             <button
               type="button"
-              onClick={() => fileInputRef.current?.click()}
+              onClick={() => handleImageTrigger('gallery')}
               aria-label="Add image"
               title="Add image"
               className={toolbarBtnClass(false)}
@@ -355,7 +466,7 @@ export function RichTextEditor({
 
             <button
               type="button"
-              onClick={() => cameraInputRef.current?.click()}
+              onClick={() => handleImageTrigger('camera')}
               aria-label="Take photo"
               title="Take photo"
               className={toolbarBtnClass(false)}
@@ -404,7 +515,7 @@ export function RichTextEditor({
           onChange={(e) => onChangeTitle(e.target.value)}
           placeholder="Note title"
           aria-label="Note title"
-          className="w-full bg-transparent text-2xl sm:text-[28px] font-bold tracking-tight text-[#202124] dark:text-[#F4F4F2] placeholder:text-[#858585]/60 focus:outline-none"
+          className="w-full bg-transparent text-2xl sm:text-[28px] font-bold tracking-tight text-[var(--text-primary)] placeholder:text-[var(--text-secondary)]/60 focus:outline-none"
         />
 
         <div
@@ -418,16 +529,15 @@ export function RichTextEditor({
           onClick={handleEditorClick}
           onPaste={handlePaste}
           aria-label="Note content"
-          className="note-content mt-4 min-h-[260px] text-[15.5px] sm:text-base text-[#202124] dark:text-[#F4F4F2] focus:outline-none"
+          className="note-content mt-4 min-h-[260px] text-[15.5px] sm:text-base text-[var(--text-primary)] focus:outline-none"
         />
 
-        {/* Attached Images Grid */}
         {images.length > 0 && (
           <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-3">
             {images.map((src, idx) => (
               <div
                 key={`${idx}_${src.slice(0, 32)}`}
-                className="relative overflow-hidden rounded-2xl bg-white dark:bg-[#222222] border border-[#EEEEEC] dark:border-[#2E2E2B]"
+                className="relative overflow-hidden rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)]"
               >
                 <img
                   src={src}

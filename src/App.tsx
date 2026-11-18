@@ -1,5 +1,6 @@
 import React from 'react';
 import { CheckCircle2, AlertCircle } from 'lucide-react';
+import { UpgradePromptDialog } from './components/PinDialog';
 import { NotesProvider, useNotes } from './context/NotesContext';
 import { SplashScreen } from './screens/SplashScreen';
 import { OnboardingScreen } from './screens/OnboardingScreen';
@@ -22,7 +23,14 @@ import { HelpSupportScreen } from './screens/HelpSupportScreen';
 import { AboutAppScreen } from './screens/AboutAppScreen';
 
 function ScreenRouter() {
-  const { screen, toast, dismissToast } = useNotes();
+  const {
+    screen,
+    toast,
+    dismissToast,
+    upgradePromptReason,
+    dismissUpgradePrompt,
+    navigate,
+  } = useNotes();
 
   const renderScreen = () => {
     switch (screen) {
@@ -75,6 +83,12 @@ function ScreenRouter() {
     <>
       {renderScreen()}
 
+      <UpgradePromptDialog
+        reason={upgradePromptReason}
+        onUpgrade={() => navigate('premium')}
+        onClose={dismissUpgradePrompt}
+      />
+
       {toast && (
         <div
           role="status"
@@ -84,12 +98,12 @@ function ScreenRouter() {
           <button
             type="button"
             onClick={dismissToast}
-            className="flex items-center gap-2 rounded-full bg-[#202124] dark:bg-[#222222] border border-transparent dark:border-[#2E2E2B] px-4 py-2.5 text-xs font-medium text-white whitespace-nowrap cursor-pointer"
+            className="flex items-center gap-2 rounded-full bg-[#202124] dark:bg-[var(--bg-card)] border border-transparent dark:border-[var(--divider)] px-4 py-2.5 text-xs font-medium text-white dark:text-[var(--text-primary)] whitespace-nowrap cursor-pointer"
           >
             {toast.variant === 'danger' ? (
               <AlertCircle className="h-3.5 w-3.5 text-[#E45B5B]" strokeWidth={2.2} />
             ) : (
-              <CheckCircle2 className="h-3.5 w-3.5 text-[#D9A928]" strokeWidth={2.2} />
+              <CheckCircle2 className="h-3.5 w-3.5 text-[var(--accent-primary)]" strokeWidth={2.2} />
             )}
             <span>{toast.text}</span>
           </button>

@@ -29,18 +29,18 @@ export function AllNotesScreen() {
 
   return (
     <NavigationShell showMobileTabs showFab>
-      <header className="sticky top-0 z-20 bg-[#F8F7F5]/95 dark:bg-[#171717]/95 backdrop-blur-md px-4 sm:px-8 pt-5 pb-3">
+      <header className="sticky top-0 z-20 bg-[var(--bg-canvas)]/95 backdrop-blur-md px-4 sm:px-8 pt-5 pb-3">
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-2">
             <button
               type="button"
               onClick={goBack}
               aria-label="Back"
-              className="lg:hidden min-h-[44px] min-w-[44px] flex items-center justify-center rounded-full text-[#202124] dark:text-[#F4F4F2] hover:bg-[#EEEEEC]/70 dark:hover:bg-[#222222] cursor-pointer"
+              className="lg:hidden min-h-[44px] min-w-[44px] flex items-center justify-center rounded-full text-[var(--text-primary)] hover:bg-[var(--bg-subtle)] cursor-pointer"
             >
               <ChevronLeft className="h-5 w-5" strokeWidth={2} />
             </button>
-            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-[#202124] dark:text-[#F4F4F2]">
+            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-[var(--text-primary)]">
               All Notes
             </h1>
           </div>
@@ -49,14 +49,14 @@ export function AllNotesScreen() {
             type="button"
             onClick={() => navigate('search')}
             aria-label="Search notes"
-            className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-full text-[#202124] dark:text-[#F4F4F2] hover:bg-[#EEEEEC]/70 dark:hover:bg-[#222222] cursor-pointer"
+            className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-full text-[var(--text-primary)] hover:bg-[var(--bg-subtle)] cursor-pointer"
           >
             <Search className="h-5 w-5" strokeWidth={1.85} />
           </button>
         </div>
 
         <div className="mt-3 flex items-center justify-between gap-3">
-          <span className="text-xs text-[#858585] dark:text-[#9A9A96] tabular-nums">
+          <span className="text-xs text-[var(--text-secondary)] tabular-nums">
             {sortedNotes.length} {sortedNotes.length === 1 ? 'note' : 'notes'}
           </span>
 
@@ -74,8 +74,8 @@ export function AllNotesScreen() {
                 onClick={() => setSortBy(opt.id)}
                 className={`min-h-[32px] px-3 rounded-full text-xs font-medium whitespace-nowrap transition-colors cursor-pointer ${
                   sortBy === opt.id
-                    ? 'bg-[#202124] text-white dark:bg-[#D9A928] dark:text-[#171717]'
-                    : 'bg-white dark:bg-[#222222] text-[#858585] border border-[#EEEEEC] dark:border-[#2E2E2B]'
+                    ? 'bg-[var(--text-primary)] text-[var(--bg-card)] dark:bg-[var(--accent-primary)] dark:text-[#171717]'
+                    : 'bg-[var(--bg-card)] text-[var(--text-secondary)] border border-[var(--divider)]'
                 }`}
               >
                 {opt.label}
@@ -88,11 +88,11 @@ export function AllNotesScreen() {
       <section className="px-5 sm:px-8 pt-3">
         {sortedNotes.length === 0 ? (
           <div className="mt-16 flex flex-col items-center text-center px-4">
-            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-white dark:bg-[#222222] border border-[#EEEEEC] dark:border-[#2E2E2B] text-[#858585]">
+            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] text-[var(--text-secondary)]">
               <FileText className="h-6 w-6" strokeWidth={1.6} />
             </div>
             <h2 className="mt-4 text-base font-semibold">No notes yet</h2>
-            <p className="mt-1 text-sm text-[#858585]">
+            <p className="mt-1 text-sm text-[var(--text-secondary)]">
               Create your first note to see it listed here.
             </p>
           </div>

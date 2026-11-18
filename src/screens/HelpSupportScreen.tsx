@@ -6,19 +6,19 @@ import { useNotes } from '../context/NotesContext';
 const FAQS = [
   {
     q: 'How does auto-save work while writing?',
-    a: 'Every edit to your note title or content is saved automatically to your device within a fraction of a second.',
+    a: 'Every edit to your note title, content, or images is saved automatically to your device within a fraction of a second.',
   },
   {
-    q: 'How do I organize notes into folders?',
-    a: 'Open the Folders tab to create or rename folders, or open any note and tap Move to Folder from the options menu.',
+    q: 'What is included in the Free plan vs Premium?',
+    a: 'Free includes up to 25 active notes, 4 folders, basic formatting, 1 image per note, and Light/Dark modes. Premium unlocks unlimited notes, unlimited folders, advanced formatting, curated themes, and PIN note lock.',
   },
   {
-    q: 'What is the difference between Archive and Trash?',
-    a: 'Archived notes stay saved out of your main feed indefinitely. Trashed notes remain recoverable until you permanently delete them or empty Trash.',
+    q: 'How do I protect a sensitive note with a PIN?',
+    a: 'With Notes Premium active, open any note menu and tap Lock Note to set a 4-digit PIN. Locked notes hide their preview until unlocked.',
   },
   {
-    q: 'Can I switch between Light and Dark mode?',
-    a: 'Yes. Go to Settings → Appearance to choose Light Mode, Dark Mode, or System Default.',
+    q: 'Can I switch between Light, Dark, and custom themes?',
+    a: 'Yes. Go to Settings → Appearance to choose Light Mode, Dark Mode, System Default, or curated Premium color palettes.',
   },
 ];
 
@@ -38,17 +38,17 @@ export function HelpSupportScreen() {
 
   return (
     <NavigationShell showMobileTabs={false}>
-      <header className="sticky top-0 z-20 bg-[#F8F7F5]/95 dark:bg-[#171717]/95 backdrop-blur-md px-4 sm:px-8 pt-5 pb-3">
+      <header className="sticky top-0 z-20 bg-[var(--bg-canvas)]/95 backdrop-blur-md px-4 sm:px-8 pt-5 pb-3">
         <div className="flex items-center gap-2">
           <button
             type="button"
             onClick={goBack}
             aria-label="Back"
-            className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-full text-[#202124] dark:text-[#F4F4F2] hover:bg-[#EEEEEC]/70 dark:hover:bg-[#222222] cursor-pointer"
+            className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-full text-[var(--text-primary)] hover:bg-[var(--bg-subtle)] cursor-pointer"
           >
             <ChevronLeft className="h-5 w-5" strokeWidth={2} />
           </button>
-          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-[#202124] dark:text-[#F4F4F2]">
+          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-[var(--text-primary)]">
             Help & Support
           </h1>
         </div>
@@ -56,10 +56,10 @@ export function HelpSupportScreen() {
 
       <section className="px-5 sm:px-8 pt-3 pb-12 space-y-6">
         <div>
-          <h2 className="px-1 mb-2.5 text-xs font-semibold text-[#858585] dark:text-[#9A9A96]">
+          <h2 className="px-1 mb-2.5 text-xs font-semibold text-[var(--text-secondary)]">
             Frequently Asked Questions
           </h2>
-          <div className="rounded-2xl bg-white dark:bg-[#222222] border border-[#EEEEEC] dark:border-[#2E2E2B] divide-y divide-[#EEEEEC] dark:divide-[#2E2E2B]">
+          <div className="rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] divide-y divide-[var(--divider)]">
             {FAQS.map((item, idx) => {
               const expanded = openIndex === idx;
               return (
@@ -70,17 +70,15 @@ export function HelpSupportScreen() {
                     aria-expanded={expanded}
                     className="flex w-full min-h-[54px] items-center justify-between gap-3 px-4 py-3 text-left cursor-pointer"
                   >
-                    <span className="text-sm font-medium text-[#202124] dark:text-[#F4F4F2]">
-                      {item.q}
-                    </span>
+                    <span className="text-sm font-medium text-[var(--text-primary)]">{item.q}</span>
                     <ChevronDown
-                      className={`h-4 w-4 shrink-0 text-[#858585] transition-transform ${
+                      className={`h-4 w-4 shrink-0 text-[var(--text-secondary)] transition-transform ${
                         expanded ? 'rotate-180' : ''
                       }`}
                     />
                   </button>
                   {expanded && (
-                    <p className="px-4 pb-4 text-sm text-[#858585] dark:text-[#9A9A96] leading-relaxed">
+                    <p className="px-4 pb-4 text-sm text-[var(--text-secondary)] leading-relaxed">
                       {item.a}
                     </p>
                   )}
@@ -91,12 +89,12 @@ export function HelpSupportScreen() {
         </div>
 
         <div>
-          <h2 className="px-1 mb-2.5 text-xs font-semibold text-[#858585] dark:text-[#9A9A96]">
+          <h2 className="px-1 mb-2.5 text-xs font-semibold text-[var(--text-secondary)]">
             Send Feedback
           </h2>
           <form
             onSubmit={handleSubmit}
-            className="rounded-2xl bg-white dark:bg-[#222222] border border-[#EEEEEC] dark:border-[#2E2E2B] p-4 space-y-3"
+            className="rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] p-4 space-y-3"
           >
             <input
               type="text"
@@ -104,7 +102,7 @@ export function HelpSupportScreen() {
               onChange={(e) => setSubject(e.target.value)}
               placeholder="Subject"
               aria-label="Subject"
-              className="w-full min-h-[46px] rounded-xl bg-[#F8F7F5] dark:bg-[#171717] border border-[#EEEEEC] dark:border-[#2E2E2B] px-4 text-sm text-[#202124] dark:text-[#F4F4F2] placeholder:text-[#858585] focus:outline-none focus:border-[#D9A928]"
+              className="w-full min-h-[46px] rounded-xl bg-[var(--bg-canvas)] border border-[var(--divider)] px-4 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-primary)]"
             />
 
             <textarea
@@ -113,13 +111,13 @@ export function HelpSupportScreen() {
               placeholder="Describe your question or feedback..."
               aria-label="Message"
               rows={4}
-              className="w-full rounded-xl bg-[#F8F7F5] dark:bg-[#171717] border border-[#EEEEEC] dark:border-[#2E2E2B] p-4 text-sm text-[#202124] dark:text-[#F4F4F2] placeholder:text-[#858585] focus:outline-none focus:border-[#D9A928] resize-none"
+              className="w-full rounded-xl bg-[var(--bg-canvas)] border border-[var(--divider)] p-4 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-primary)] resize-none"
             />
 
             <button
               type="submit"
               disabled={!subject.trim() || !message.trim()}
-              className="flex w-full min-h-[46px] items-center justify-center gap-2 rounded-xl bg-[#202124] dark:bg-[#D9A928] text-sm font-semibold text-white dark:text-[#171717] disabled:opacity-40 cursor-pointer"
+              className="flex w-full min-h-[46px] items-center justify-center gap-2 rounded-xl bg-[var(--text-primary)] dark:bg-[var(--accent-primary)] text-sm font-semibold text-[var(--bg-card)] dark:text-[#171717] disabled:opacity-40 cursor-pointer"
             >
               <Send className="h-4 w-4" strokeWidth={2} />
               Send Message

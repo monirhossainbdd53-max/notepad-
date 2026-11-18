@@ -35,47 +35,45 @@ export function OnboardingScreen() {
   };
 
   return (
-    <div className="min-h-screen bg-[#F8F7F5] dark:bg-[#171717] text-[#202124] dark:text-[#F4F4F2] flex flex-col justify-between px-6 py-8 sm:py-12">
+    <div className="min-h-screen bg-[var(--bg-canvas)] text-[var(--text-primary)] flex flex-col justify-between px-6 py-8 sm:py-12">
       <div className="mx-auto flex w-full max-w-md justify-end">
         <button
           type="button"
           onClick={completeOnboarding}
-          className="min-h-[44px] px-3 text-sm font-medium text-[#858585] dark:text-[#9A9A96] hover:text-[#202124] dark:hover:text-[#F4F4F2] transition-colors cursor-pointer"
+          className="min-h-[44px] px-3 text-sm font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
         >
           Skip
         </button>
       </div>
 
       <div className="mx-auto flex w-full max-w-md flex-col items-center text-center my-auto py-8">
-        {/* Clean circular minimal illustration */}
-        <div className="relative flex h-48 w-48 items-center justify-center rounded-full bg-white dark:bg-[#222222] border border-[#EEEEEC] dark:border-[#2E2E2B]">
+        <div className="relative flex h-48 w-48 items-center justify-center rounded-full bg-[var(--bg-card)] border border-[var(--divider)]">
           {slide.icon === 'write' ? (
-            <div className="relative flex h-24 w-20 flex-col justify-center gap-2.5 rounded-2xl border-2 border-[#202124] dark:border-[#F4F4F2] bg-[#F8F7F5] dark:bg-[#171717] px-3.5">
-              <div className="h-0.5 w-full rounded bg-[#202124] dark:bg-[#F4F4F2]" />
-              <div className="h-0.5 w-4/5 rounded bg-[#202124] dark:bg-[#F4F4F2]" />
-              <div className="h-0.5 w-3/5 rounded bg-[#858585]" />
-              <div className="absolute -bottom-3 -right-3 flex h-9 w-9 items-center justify-center rounded-full bg-[#202124] dark:bg-[#D9A928] text-white dark:text-[#171717]">
+            <div className="relative flex h-24 w-20 flex-col justify-center gap-2.5 rounded-2xl border-2 border-[var(--text-primary)] bg-[var(--bg-canvas)] px-3.5">
+              <div className="h-0.5 w-full rounded bg-[var(--text-primary)]" />
+              <div className="h-0.5 w-4/5 rounded bg-[var(--text-primary)]" />
+              <div className="h-0.5 w-3/5 rounded bg-[var(--text-secondary)]" />
+              <div className="absolute -bottom-3 -right-3 flex h-9 w-9 items-center justify-center rounded-full bg-[var(--text-primary)] dark:bg-[var(--accent-primary)] text-[var(--bg-card)] dark:text-[#171717]">
                 <Plus className="h-4 w-4" strokeWidth={2.5} />
               </div>
             </div>
           ) : (
-            <div className="relative flex h-24 w-24 flex-col items-center justify-center gap-2 rounded-2xl border-2 border-[#202124] dark:border-[#F4F4F2] bg-[#F8F7F5] dark:bg-[#171717]">
-              <Folder className="h-9 w-9 text-[#202124] dark:text-[#F4F4F2]" strokeWidth={1.75} />
-              <div className="absolute -bottom-2.5 -right-2.5 flex h-9 w-9 items-center justify-center rounded-full bg-[#D9A928] text-white dark:text-[#171717]">
+            <div className="relative flex h-24 w-24 flex-col items-center justify-center gap-2 rounded-2xl border-2 border-[var(--text-primary)] bg-[var(--bg-canvas)]">
+              <Folder className="h-9 w-9 text-[var(--text-primary)]" strokeWidth={1.75} />
+              <div className="absolute -bottom-2.5 -right-2.5 flex h-9 w-9 items-center justify-center rounded-full bg-[var(--accent-primary)] text-white dark:text-[#171717]">
                 <Check className="h-4 w-4" strokeWidth={2.5} />
               </div>
             </div>
           )}
         </div>
 
-        <h1 className="mt-10 text-2xl sm:text-3xl font-bold tracking-tight text-[#202124] dark:text-[#F4F4F2] text-balance">
+        <h1 className="mt-10 text-2xl sm:text-3xl font-bold tracking-tight text-[var(--text-primary)] text-balance">
           {slide.title}
         </h1>
-        <p className="mt-3 max-w-xs text-[15px] leading-relaxed text-[#858585] dark:text-[#9A9A96]">
+        <p className="mt-3 max-w-xs text-[15px] leading-relaxed text-[var(--text-secondary)]">
           {slide.description}
         </p>
 
-        {/* Minimal indicator dots */}
         <div className="mt-8 flex items-center gap-2" aria-label="Onboarding progress">
           {SLIDES.map((s, idx) => (
             <button
@@ -85,8 +83,8 @@ export function OnboardingScreen() {
               aria-label={`Slide ${idx + 1}`}
               className={`h-2 rounded-full transition-all cursor-pointer ${
                 idx === step
-                  ? 'w-5 bg-[#202124] dark:bg-[#D9A928]'
-                  : 'w-2 bg-[#EEEEEC] dark:bg-[#2E2E2B]'
+                  ? 'w-5 bg-[var(--text-primary)] dark:bg-[var(--accent-primary)]'
+                  : 'w-2 bg-[var(--divider)]'
               }`}
             />
           ))}
@@ -97,7 +95,7 @@ export function OnboardingScreen() {
         <button
           type="button"
           onClick={handleNext}
-          className="w-full min-h-[48px] rounded-full bg-[#202124] dark:bg-[#D9A928] px-6 text-sm font-semibold text-white dark:text-[#171717] transition-opacity hover:opacity-90 active:opacity-80 cursor-pointer"
+          className="w-full min-h-[48px] rounded-full bg-[var(--text-primary)] dark:bg-[var(--accent-primary)] px-6 text-sm font-semibold text-[var(--bg-card)] dark:text-[#171717] transition-opacity hover:opacity-90 active:opacity-80 cursor-pointer"
         >
           {isLast ? 'Start Writing' : 'Next'}
         </button>

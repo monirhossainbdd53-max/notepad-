@@ -5,7 +5,8 @@ import { NavigationShell } from '../components/NavigationShell';
 import { useNotes } from '../context/NotesContext';
 
 export function AccountScreen() {
-  const { account, updateAccount, activeNotes, folders, resetLocalData, goBack } = useNotes();
+  const { account, updateAccount, activeNotes, folders, isPremium, resetLocalData, goBack } =
+    useNotes();
 
   const [name, setName] = useState(account.name);
   const [email, setEmail] = useState(account.email);
@@ -28,39 +29,40 @@ export function AccountScreen() {
 
   return (
     <NavigationShell showMobileTabs={false}>
-      <header className="sticky top-0 z-20 bg-[#F8F7F5]/95 dark:bg-[#171717]/95 backdrop-blur-md px-4 sm:px-8 pt-5 pb-3">
+      <header className="sticky top-0 z-20 bg-[var(--bg-canvas)]/95 backdrop-blur-md px-4 sm:px-8 pt-5 pb-3">
         <div className="flex items-center gap-2">
           <button
             type="button"
             onClick={goBack}
             aria-label="Back"
-            className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-full text-[#202124] dark:text-[#F4F4F2] hover:bg-[#EEEEEC]/70 dark:hover:bg-[#222222] cursor-pointer"
+            className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-full text-[var(--text-primary)] hover:bg-[var(--bg-subtle)] cursor-pointer"
           >
             <ChevronLeft className="h-5 w-5" strokeWidth={2} />
           </button>
-          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-[#202124] dark:text-[#F4F4F2]">
+          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-[var(--text-primary)]">
             Account
           </h1>
         </div>
       </header>
 
       <section className="px-5 sm:px-8 pt-4 space-y-6">
-        <div className="flex items-center gap-4 rounded-2xl bg-white dark:bg-[#222222] border border-[#EEEEEC] dark:border-[#2E2E2B] p-5">
-          <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-full bg-[#FFF5D9] dark:bg-[#D9A928]/20 text-lg font-bold text-[#202124] dark:text-[#D9A928]">
+        <div className="flex items-center gap-4 rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] p-5">
+          <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-full bg-[var(--accent-soft)] text-lg font-bold text-[var(--accent-primary)]">
             {initials || <User className="h-6 w-6" />}
           </div>
           <div className="min-w-0">
             <p className="text-base font-semibold truncate">{account.name}</p>
-            <p className="text-sm text-[#858585] dark:text-[#9A9A96] truncate">{account.email}</p>
-            <p className="mt-1 text-xs text-[#858585] dark:text-[#9A9A96] tabular-nums">
-              {activeNotes.length} notes · {folders.length} folders
+            <p className="text-sm text-[var(--text-secondary)] truncate">{account.email}</p>
+            <p className="mt-1 text-xs text-[var(--text-secondary)] tabular-nums">
+              {isPremium ? 'Premium' : 'Free'} · {activeNotes.length} notes · {folders.length}{' '}
+              folders
             </p>
           </div>
         </div>
 
         <form
           onSubmit={handleSave}
-          className="rounded-2xl bg-white dark:bg-[#222222] border border-[#EEEEEC] dark:border-[#2E2E2B] p-5 space-y-3.5"
+          className="rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] p-5 space-y-3.5"
         >
           <input
             type="text"
@@ -68,7 +70,7 @@ export function AccountScreen() {
             onChange={(e) => setName(e.target.value)}
             placeholder="Full name"
             aria-label="Full name"
-            className="w-full min-h-[46px] rounded-xl bg-[#F8F7F5] dark:bg-[#171717] border border-[#EEEEEC] dark:border-[#2E2E2B] px-4 text-sm text-[#202124] dark:text-[#F4F4F2] placeholder:text-[#858585] focus:outline-none focus:border-[#D9A928]"
+            className="w-full min-h-[46px] rounded-xl bg-[var(--bg-canvas)] border border-[var(--divider)] px-4 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-primary)]"
           />
 
           <input
@@ -77,12 +79,12 @@ export function AccountScreen() {
             onChange={(e) => setEmail(e.target.value)}
             placeholder="Email address"
             aria-label="Email address"
-            className="w-full min-h-[46px] rounded-xl bg-[#F8F7F5] dark:bg-[#171717] border border-[#EEEEEC] dark:border-[#2E2E2B] px-4 text-sm text-[#202124] dark:text-[#F4F4F2] placeholder:text-[#858585] focus:outline-none focus:border-[#D9A928]"
+            className="w-full min-h-[46px] rounded-xl bg-[var(--bg-canvas)] border border-[var(--divider)] px-4 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-primary)]"
           />
 
           <button
             type="submit"
-            className="w-full min-h-[46px] rounded-xl bg-[#202124] dark:bg-[#D9A928] text-sm font-semibold text-white dark:text-[#171717] transition-opacity hover:opacity-90 cursor-pointer"
+            className="w-full min-h-[46px] rounded-xl bg-[var(--text-primary)] dark:bg-[var(--accent-primary)] text-sm font-semibold text-[var(--bg-card)] dark:text-[#171717] transition-opacity hover:opacity-90 cursor-pointer"
           >
             Save Profile
           </button>
@@ -91,7 +93,7 @@ export function AccountScreen() {
         <button
           type="button"
           onClick={() => setResetOpen(true)}
-          className="flex w-full min-h-[50px] items-center justify-center gap-2 rounded-2xl bg-white dark:bg-[#222222] border border-[#EEEEEC] dark:border-[#2E2E2B] text-sm font-medium text-[#E45B5B] hover:bg-[#E45B5B]/5 transition-colors cursor-pointer"
+          className="flex w-full min-h-[50px] items-center justify-center gap-2 rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] text-sm font-medium text-[#E45B5B] hover:bg-[#E45B5B]/5 transition-colors cursor-pointer"
         >
           <RotateCcw className="h-4 w-4" strokeWidth={1.85} />
           Reset Local Workspace

@@ -34,7 +34,7 @@ export function ConfirmDialog({
       aria-labelledby="confirm-dialog-title"
     >
       <div
-        className="w-full max-w-sm rounded-3xl bg-white dark:bg-[#222222] border border-[#EEEEEC] dark:border-[#2E2E2B] p-6 text-center"
+        className="w-full max-w-sm rounded-3xl bg-[var(--bg-card)] border border-[var(--divider)] p-6 text-center"
         onClick={(e) => e.stopPropagation()}
       >
         {danger && (
@@ -44,11 +44,11 @@ export function ConfirmDialog({
         )}
         <h2
           id="confirm-dialog-title"
-          className="text-lg font-semibold text-[#202124] dark:text-[#F4F4F2]"
+          className="text-lg font-semibold text-[var(--text-primary)]"
         >
           {title}
         </h2>
-        <p className="mt-1.5 text-sm text-[#858585] dark:text-[#9A9A96] leading-relaxed">
+        <p className="mt-1.5 text-sm text-[var(--text-secondary)] leading-relaxed">
           {description}
         </p>
 
@@ -62,7 +62,7 @@ export function ConfirmDialog({
             className={`min-h-[44px] w-full rounded-xl px-4 py-2.5 text-sm font-semibold transition-opacity active:opacity-85 cursor-pointer ${
               danger
                 ? 'bg-[#E45B5B] text-white'
-                : 'bg-[#202124] text-white dark:bg-[#D9A928] dark:text-[#171717]'
+                : 'bg-[var(--text-primary)] text-[var(--bg-card)] dark:bg-[var(--accent-primary)] dark:text-[#171717]'
             }`}
           >
             {confirmLabel}
@@ -70,7 +70,7 @@ export function ConfirmDialog({
           <button
             type="button"
             onClick={onClose}
-            className="min-h-[44px] w-full rounded-xl bg-[#F8F7F5] dark:bg-[#2B2B29] px-4 py-2.5 text-sm font-medium text-[#202124] dark:text-[#F4F4F2] transition-colors hover:bg-[#EEEEEC] dark:hover:bg-[#343431] cursor-pointer"
+            className="min-h-[44px] w-full rounded-xl bg-[var(--bg-canvas)] px-4 py-2.5 text-sm font-medium text-[var(--text-primary)] transition-colors hover:bg-[var(--bg-subtle)] cursor-pointer"
           >
             {cancelLabel}
           </button>
@@ -122,15 +122,15 @@ export function FolderNameDialog({
       <form
         onSubmit={handleSubmit}
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-sm rounded-3xl bg-white dark:bg-[#222222] border border-[#EEEEEC] dark:border-[#2E2E2B] p-6"
+        className="w-full max-w-sm rounded-3xl bg-[var(--bg-card)] border border-[var(--divider)] p-6"
       >
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold text-[#202124] dark:text-[#F4F4F2]">{title}</h2>
+          <h2 className="text-lg font-semibold text-[var(--text-primary)]">{title}</h2>
           <button
             type="button"
             onClick={onClose}
             aria-label="Close"
-            className="min-h-[40px] min-w-[40px] flex items-center justify-center rounded-full text-[#858585] hover:bg-[#F8F7F5] dark:hover:bg-[#2B2B29] cursor-pointer"
+            className="min-h-[40px] min-w-[40px] flex items-center justify-center rounded-full text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)] cursor-pointer"
           >
             <X className="h-5 w-5" />
           </button>
@@ -144,21 +144,21 @@ export function FolderNameDialog({
           aria-label="Folder name"
           autoFocus
           maxLength={40}
-          className="w-full min-h-[46px] rounded-xl bg-[#F8F7F5] dark:bg-[#171717] border border-[#EEEEEC] dark:border-[#2E2E2B] px-4 text-sm text-[#202124] dark:text-[#F4F4F2] placeholder:text-[#858585] focus:outline-none focus:border-[#D9A928]"
+          className="w-full min-h-[46px] rounded-xl bg-[var(--bg-canvas)] border border-[var(--divider)] px-4 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-primary)]"
         />
 
         <div className="mt-5 flex items-center gap-2.5">
           <button
             type="button"
             onClick={onClose}
-            className="flex-1 min-h-[44px] rounded-xl bg-[#F8F7F5] dark:bg-[#2B2B29] px-4 text-sm font-medium text-[#202124] dark:text-[#F4F4F2] cursor-pointer"
+            className="flex-1 min-h-[44px] rounded-xl bg-[var(--bg-canvas)] px-4 text-sm font-medium text-[var(--text-primary)] cursor-pointer"
           >
             Cancel
           </button>
           <button
             type="submit"
             disabled={!name.trim()}
-            className="flex-1 min-h-[44px] rounded-xl bg-[#202124] dark:bg-[#D9A928] px-4 text-sm font-semibold text-white dark:text-[#171717] disabled:opacity-40 cursor-pointer"
+            className="flex-1 min-h-[44px] rounded-xl bg-[var(--text-primary)] dark:bg-[var(--accent-primary)] px-4 text-sm font-semibold text-[var(--bg-card)] dark:text-[#171717] disabled:opacity-40 cursor-pointer"
           >
             {confirmLabel}
           </button>
@@ -196,22 +196,22 @@ export function FolderPickerDialog({
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="w-full sm:max-w-sm rounded-t-3xl sm:rounded-3xl bg-white dark:bg-[#222222] border border-[#EEEEEC] dark:border-[#2E2E2B] p-6"
+        className="w-full sm:max-w-sm rounded-t-3xl sm:rounded-3xl bg-[var(--bg-card)] border border-[var(--divider)] p-6"
       >
-        <div className="mx-auto mb-3 h-1 w-10 rounded-full bg-[#EEEEEC] dark:bg-[#3A3A37] sm:hidden" />
+        <div className="mx-auto mb-3 h-1 w-10 rounded-full bg-[var(--divider)] sm:hidden" />
         <div className="flex items-center justify-between mb-3">
-          <h2 className="text-base font-semibold text-[#202124] dark:text-[#F4F4F2]">{title}</h2>
+          <h2 className="text-base font-semibold text-[var(--text-primary)]">{title}</h2>
           <button
             type="button"
             onClick={onClose}
             aria-label="Close"
-            className="min-h-[40px] min-w-[40px] flex items-center justify-center rounded-full text-[#858585] hover:bg-[#F8F7F5] dark:hover:bg-[#2B2B29] cursor-pointer"
+            className="min-h-[40px] min-w-[40px] flex items-center justify-center rounded-full text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)] cursor-pointer"
           >
             <X className="h-4 w-4" />
           </button>
         </div>
 
-        <div className="divide-y divide-[#EEEEEC] dark:divide-[#2E2E2B] max-h-72 overflow-y-auto">
+        <div className="divide-y divide-[var(--divider)] max-h-72 overflow-y-auto">
           {folders.map((folder) => {
             const active = folder.id === selectedFolderId;
             return (
@@ -222,16 +222,20 @@ export function FolderPickerDialog({
                   onSelect(folder.id);
                   onClose();
                 }}
-                className="flex w-full min-h-[48px] items-center justify-between py-2.5 px-1 text-left transition-colors hover:bg-[#F8F7F5] dark:hover:bg-[#2B2B29] rounded-lg cursor-pointer"
+                className="flex w-full min-h-[48px] items-center justify-between py-2.5 px-1 text-left transition-colors hover:bg-[var(--bg-subtle)] rounded-lg cursor-pointer"
               >
-                <span className="flex items-center gap-3 text-sm font-medium text-[#202124] dark:text-[#F4F4F2]">
+                <span className="flex items-center gap-3 text-sm font-medium text-[var(--text-primary)]">
                   <FolderIcon
-                    className={`h-4 w-4 ${active ? 'text-[#D9A928]' : 'text-[#858585]'}`}
+                    className={`h-4 w-4 ${
+                      active ? 'text-[var(--accent-primary)]' : 'text-[var(--text-secondary)]'
+                    }`}
                     strokeWidth={1.75}
                   />
                   {folder.name}
                 </span>
-                {active && <Check className="h-4 w-4 text-[#D9A928]" strokeWidth={2.25} />}
+                {active && (
+                  <Check className="h-4 w-4 text-[var(--accent-primary)]" strokeWidth={2.25} />
+                )}
               </button>
             );
           })}
@@ -260,21 +264,21 @@ export function InfoSheetDialog({ open, title, children, onClose }: InfoSheetDia
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="w-full sm:max-w-md rounded-t-3xl sm:rounded-3xl bg-white dark:bg-[#222222] border border-[#EEEEEC] dark:border-[#2E2E2B] p-6 max-h-[85vh] flex flex-col"
+        className="w-full sm:max-w-md rounded-t-3xl sm:rounded-3xl bg-[var(--bg-card)] border border-[var(--divider)] p-6 max-h-[85vh] flex flex-col"
       >
-        <div className="mx-auto mb-3 h-1 w-10 rounded-full bg-[#EEEEEC] dark:bg-[#3A3A37] sm:hidden" />
-        <div className="flex items-center justify-between pb-3 border-b border-[#EEEEEC] dark:border-[#2E2E2B]">
-          <h2 className="text-base font-semibold text-[#202124] dark:text-[#F4F4F2]">{title}</h2>
+        <div className="mx-auto mb-3 h-1 w-10 rounded-full bg-[var(--divider)] sm:hidden" />
+        <div className="flex items-center justify-between pb-3 border-b border-[var(--divider)]">
+          <h2 className="text-base font-semibold text-[var(--text-primary)]">{title}</h2>
           <button
             type="button"
             onClick={onClose}
             aria-label="Close"
-            className="min-h-[40px] min-w-[40px] flex items-center justify-center rounded-full text-[#858585] hover:bg-[#F8F7F5] dark:hover:bg-[#2B2B29] cursor-pointer"
+            className="min-h-[40px] min-w-[40px] flex items-center justify-center rounded-full text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)] cursor-pointer"
           >
             <X className="h-4 w-4" />
           </button>
         </div>
-        <div className="mt-4 overflow-y-auto text-sm text-[#202124] dark:text-[#F4F4F2] leading-relaxed">
+        <div className="mt-4 overflow-y-auto text-sm text-[var(--text-primary)] leading-relaxed">
           {children}
         </div>
       </div>
