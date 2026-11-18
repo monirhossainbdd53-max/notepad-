@@ -16,6 +16,7 @@ import { NavigationShell } from '../components/NavigationShell';
 import { PinDialog } from '../components/PinDialog';
 import { RichTextEditor } from '../components/RichTextEditor';
 import { useNotes } from '../context/NotesContext';
+import { extractNoteImages } from '../utils/noteHelpers';
 
 interface NoteEditorScreenProps {
   mode: 'create' | 'edit';
@@ -188,7 +189,7 @@ export function NoteEditorScreen({ mode }: NoteEditorScreenProps) {
     if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
     const emptyTitle = !title.trim();
     const emptyContent = !content.replace(/<[^>]*>/g, '').trim();
-    const emptyImages = images.length === 0;
+    const emptyImages = extractNoteImages(content, images).length === 0;
 
     if (mode === 'create' && emptyTitle && emptyContent && emptyImages) {
       permanentlyDeleteNote(note.id);

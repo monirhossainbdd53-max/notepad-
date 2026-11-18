@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Archive, Image as ImageIcon, Lock, Pin, RotateCcw, Star, Trash2 } from 'lucide-react';
 import { useNotes } from '../context/NotesContext';
 import { Folder, Note } from '../types/notes';
-import { formatNoteDate, getNotePreview } from '../utils/noteHelpers';
+import { extractNoteImages, formatNoteDate, getNotePreview } from '../utils/noteHelpers';
 
 interface NoteCardProps {
   note: Note;
@@ -140,7 +140,8 @@ export function NoteCard({
   const isLocked = Boolean(note.isLocked);
   const preview = isLocked ? 'Locked note · Enter PIN to view' : getNotePreview(note.content, 125);
   const dateText = formatNoteDate(note.updatedAt);
-  const firstImage = !isLocked && note.images && note.images.length > 0 ? note.images[0] : null;
+  const allImages = !isLocked ? extractNoteImages(note.content, note.images) : [];
+  const firstImage = allImages[0] || null;
 
   const threshold = getThreshold();
   const isSwipingRight = offsetX > 6;
@@ -245,10 +246,10 @@ export function NoteCard({
                   <span className="truncate max-w-[140px]">{folder.name}</span>
                 </>
               )}
-              {!isLocked && note.images && note.images.length > 1 && (
+              {!isLocked && allImages.length > 1 && (
                 <>
                   <span aria-hidden="true">·</span>
-                  <span>{note.images.length} photos</span>
+                  <span>{allImages.length} photos</span>
                 </>
               )}
             </div>

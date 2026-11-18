@@ -20,6 +20,7 @@ import { PinDialog } from '../components/PinDialog';
 import { useNotes } from '../context/NotesContext';
 import {
   countWords,
+  extractNoteImages,
   formatFullDate,
   stripHtmlToText,
   toggleChecklistItemInHtml,
@@ -137,18 +138,25 @@ export function NoteDetailsScreen() {
 
   const folder = getFolderById(note.folderId);
   const words = countWords(note.content);
-  const images = note.images ?? [];
+  const legacyImages = note.images ?? [];
 
   const handleContentClick = (e: React.MouseEvent<HTMLDivElement>) => {
     const target = e.target as HTMLElement;
     const box = target.closest('.note-check-box');
-    if (!box) return;
-    const container = e.currentTarget;
-    const boxes = Array.from(container.querySelectorAll('.note-check-box'));
-    const index = boxes.indexOf(box);
-    if (index !== -1) {
-      const updatedHtml = toggleChecklistItemInHtml(note.content, index);
-      updateNote(note.id, { content: updatedHtml });
+    if (box) {
+      const container = e.currentTarget;
+      const boxes = Array.from(container.querySelectorAll('.note-check-box'));
+      const index = boxes.indexOf(box);
+      if (index !== -1) {
+        const updatedHtml = toggleChecklistItemInHtml(note.content, index);
+        updateNote(note.id, { content: updatedHtml });
+      }
+      return;
+    }
+
+    const clickedImg = target.closest('.note-image-block img') as HTMLImageElement | null;
+    if (clickedImg && clickedImg.src) {
+      setLightboxSrc(clickedImg.src);
     }
   };
 
@@ -357,19 +365,19 @@ export function NoteDetailsScreen() {
 
           <div
             onClick={handleContentClick}
-            className="note-content text-[15.5px] sm:text-base text-[var(--text-primary)]"
+            className="note-content note-readonly text-[15.5px] sm:text-base text-[var(--text-primary)]"
             dangerouslySetInnerHTML={{
               __html:
                 note.content ||
-                (images.length > 0
+                (extractNoteImages(note.content, legacyImages).length > 0
                   ? ''
                   : '<p style="color:var(--text-secondary);">This note is empty. Tap Edit to start writing.</p>'),
             }}
           />
 
-          {images.length > 0 && (
+          {legacyImages.length > 0 && (
             <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {images.map((src, idx) => (
+              {legacyImages.map((src, idx) => (
                 <button
                   key={`${idx}_${src.slice(0, 28)}`}
                   type="button"

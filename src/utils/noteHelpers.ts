@@ -5,14 +5,37 @@ export function stripHtmlToText(html: string): string {
   }
   const container = document.createElement('div');
   container.innerHTML = html;
-  // Replace block boundaries with spaces so previews read naturally
-  const blocks = container.querySelectorAll('p, li, div');
+  // Remove non-content image controls before extracting text
+  container.querySelectorAll('.note-image-controls').forEach((el) => el.remove());
+  const blocks = container.querySelectorAll('p, li, div, h2, blockquote');
   blocks.forEach((el) => {
     el.appendChild(document.createTextNode(' '));
   });
   return (container.textContent || container.innerText || '')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+export function extractNoteImages(html: string, legacyImages?: string[]): string[] {
+  const result: string[] = [];
+  if (html && typeof window !== 'undefined') {
+    const container = document.createElement('div');
+    container.innerHTML = html;
+    container.querySelectorAll('.note-image-block img, img').forEach((img) => {
+      const src = img.getAttribute('src');
+      if (src && !result.includes(src)) {
+        result.push(src);
+      }
+    });
+  }
+  if (Array.isArray(legacyImages)) {
+    legacyImages.forEach((src) => {
+      if (src && !result.includes(src)) {
+        result.push(src);
+      }
+    });
+  }
+  return result;
 }
 
 export function getNotePreview(html: string, maxLength = 120): string {
@@ -57,11 +80,15 @@ export function formatNoteDate(isoString: string): string {
 export function formatFullDate(isoString: string): string {
   const date = new Date(isoString);
   if (Number.isNaN(date.getTime())) return '';
-  return date.toLocaleDateString([], {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-  }) + ' · ' + date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  return (
+    date.toLocaleDateString([], {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+    }) +
+    ' · ' +
+    date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+  );
 }
 
 export function countWords(html: string): number {

@@ -192,6 +192,82 @@
   outline: none;
 }
 
+/* Inline Draggable Image Blocks */
+.note-content .note-image-block {
+  position: relative;
+  margin: 0.85rem 0;
+  border-radius: 1rem;
+  overflow: hidden;
+  border: 1px solid var(--divider);
+  background-color: var(--bg-card);
+  user-select: none;
+  max-width: 100%;
+}
+
+.note-content .note-image-block img {
+  display: block;
+  width: 100%;
+  max-height: 24rem;
+  object-fit: cover;
+  cursor: grab;
+  -webkit-user-drag: none;
+}
+
+.note-content .note-image-block.is-dragging {
+  opacity: 0.35;
+}
+
+.note-content .note-image-controls {
+  position: absolute;
+  top: 0.625rem;
+  left: 0.625rem;
+  right: 0.625rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  pointer-events: none;
+}
+
+.note-content .note-img-drag,
+.note-content .note-img-remove {
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.125rem;
+  height: 2.125rem;
+  border-radius: 9999px;
+  background-color: rgba(32, 33, 36, 0.78);
+  color: #ffffff;
+  border: none;
+  transition: background-color 150ms ease, transform 150ms ease;
+}
+
+.note-content .note-img-drag {
+  cursor: grab;
+  touch-action: none;
+}
+
+.note-content .note-img-drag:active {
+  cursor: grabbing;
+}
+
+.note-content .note-img-remove {
+  cursor: pointer;
+}
+
+.note-content .note-img-remove:hover {
+  background-color: #E45B5B;
+}
+
+.note-readonly .note-image-controls {
+  display: none;
+}
+
+.note-readonly .note-image-block img {
+  cursor: zoom-in;
+}
+
 .no-scrollbar::-webkit-scrollbar {
   display: none;
 }
