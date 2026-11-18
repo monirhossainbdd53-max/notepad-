@@ -18,7 +18,7 @@ import {
 } from '../types/notes';
 import { generateId } from '../utils/noteHelpers';
 
-const STORAGE_KEY = 'notes_app_state_v1';
+const STORAGE_KEY = 'notes_app_state_v2';
 
 interface PersistedState {
   notes: Note[];
@@ -104,7 +104,7 @@ interface NotesContextValue {
   getFolderNoteCount: (folderId: string) => number;
   resetLocalData: () => void;
   toast: ToastMessage | null;
-  showToast: (text: string, variant?: 'default' | 'danger') => void;
+  showToast: (text: string, variant?: 'default' | 'danger', undoAction?: () => void) => void;
   dismissToast: () => void;
 }
 
@@ -115,7 +115,7 @@ const defaultPersistedState: PersistedState = {
   palette: 'default',
   isPremium: false,
   notePin: null,
-  defaultFolderId: 'folder_personal',
+  defaultFolderId: '',
   notifications: {
     dailyReminder: false,
     weeklyDigest: true,
@@ -133,15 +133,12 @@ function loadInitialState(): PersistedState {
     const parsed = JSON.parse(raw) as Partial<PersistedState>;
     return {
       notes: Array.isArray(parsed.notes) ? parsed.notes : defaultPersistedState.notes,
-      folders:
-        Array.isArray(parsed.folders) && parsed.folders.length > 0
-          ? parsed.folders
-          : defaultPersistedState.folders,
+      folders: Array.isArray(parsed.folders) ? parsed.folders : defaultPersistedState.folders,
       theme: parsed.theme || 'light',
       palette: parsed.palette || 'default',
       isPremium: Boolean(parsed.isPremium),
       notePin: typeof parsed.notePin === 'string' ? parsed.notePin : null,
-      defaultFolderId: parsed.defaultFolderId || 'folder_personal',
+      defaultFolderId: typeof parsed.defaultFolderId === 'string' ? parsed.defaultFolderId : '',
       notifications: {
         ...defaultPersistedState.notifications,
         ...(parsed.notifications || {}),
@@ -271,13 +268,17 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (!toast) return;
-    const timer = window.setTimeout(() => setToast(null), 2600);
+    const duration = toast.undoAction ? 4000 : 2600;
+    const timer = window.setTimeout(() => setToast(null), duration);
     return () => window.clearTimeout(timer);
   }, [toast]);
 
-  const showToast = useCallback((text: string, variant: 'default' | 'danger' = 'default') => {
-    setToast({ id: generateId('toast'), text, variant });
-  }, []);
+  const showToast = useCallback(
+    (text: string, variant: 'default' | 'danger' = 'default', undoAction?: () => void) => {
+      setToast({ id: generateId('toast'), text, variant, undoAction });
+    },
+    []
+  );
 
   const dismissToast = useCallback(() => setToast(null), []);
 
@@ -471,7 +472,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
           ? partial.folderId
           : folders.some((f) => f.id === defaultFolderId)
           ? defaultFolderId
-          : folders[0]?.id || 'folder_personal';
+          : folders[0]?.id || '';
 
       const newNote: Note = {
         id: generateId('note'),
@@ -550,6 +551,8 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
 
   const archiveNote = useCallback(
     (id: string) => {
+      const existing = notes.find((n) => n.id === id);
+      const wasPinned = Boolean(existing?.isPinned);
       setNotes((prev) =>
         prev.map((n) =>
           n.id === id
@@ -562,9 +565,17 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
             : n
         )
       );
-      showToast('Note archived');
+      showToast('Note archived', 'default', () => {
+        setNotes((prev) =>
+          prev.map((n) =>
+            n.id === id
+              ? { ...n, isArchived: false, isPinned: wasPinned }
+              : n
+          )
+        );
+      });
     },
-    [showToast]
+    [notes, showToast]
   );
 
   const restoreArchivedNote = useCallback(
@@ -583,6 +594,9 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
 
   const deleteNote = useCallback(
     (id: string) => {
+      const existing = notes.find((n) => n.id === id);
+      const wasPinned = Boolean(existing?.isPinned);
+      const wasArchived = Boolean(existing?.isArchived);
       setNotes((prev) =>
         prev.map((n) =>
           n.id === id
@@ -596,9 +610,23 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
             : n
         )
       );
-      showToast('Note moved to Trash');
+      showToast('Note moved to Trash', 'default', () => {
+        setNotes((prev) =>
+          prev.map((n) =>
+            n.id === id
+              ? {
+                  ...n,
+                  isDeleted: false,
+                  isPinned: wasPinned,
+                  isArchived: wasArchived,
+                  deletedAt: undefined,
+                }
+              : n
+          )
+        );
+      });
     },
-    [showToast]
+    [notes, showToast]
   );
 
   const restoreDeletedNote = useCallback(
@@ -667,7 +695,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   const deleteFolder = useCallback(
     (id: string) => {
       const remaining = folders.filter((f) => f.id !== id);
-      const fallbackId = remaining[0]?.id || 'folder_personal';
+      const fallbackId = remaining[0]?.id || '';
       setFolders(remaining);
       setNotes((prev) =>
         prev.map((n) => (n.folderId === id ? { ...n, folderId: fallbackId } : n))
@@ -685,11 +713,11 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     setFolders(DEFAULT_FOLDERS);
     setAccount(INITIAL_ACCOUNT);
     setRecentSearches(INITIAL_RECENT_SEARCHES);
-    setDefaultFolderIdState('folder_personal');
+    setDefaultFolderIdState('');
     setPaletteState('default');
     setNotePinState(null);
     setUnlockedNoteIds([]);
-    showToast('Workspace reset to defaults');
+    showToast('Workspace cleared');
   }, [showToast]);
 
   const pinnedNotes = useMemo(() => activeNotes.filter((n) => n.isPinned), [activeNotes]);

@@ -70,4 +70,5 @@ export interface ToastMessage {
   id: string;
   text: string;
   variant?: 'default' | 'danger';
+  undoAction?: () => void;
 }

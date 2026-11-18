@@ -123,19 +123,17 @@ export function FolderDetailsScreen() {
                     Rename Folder
                   </button>
 
-                  {folders.length > 1 && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setMenuOpen(false);
-                        setDeleteOpen(true);
-                      }}
-                      className="flex w-full min-h-[42px] items-center gap-2.5 px-4 text-sm text-[#E45B5B] hover:bg-[var(--bg-subtle)] cursor-pointer"
-                    >
-                      <Trash2 className="h-4 w-4" strokeWidth={1.8} />
-                      Delete Folder
-                    </button>
-                  )}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMenuOpen(false);
+                      setDeleteOpen(true);
+                    }}
+                    className="flex w-full min-h-[42px] items-center gap-2.5 px-4 text-sm text-[#E45B5B] hover:bg-[var(--bg-subtle)] cursor-pointer"
+                  >
+                    <Trash2 className="h-4 w-4" strokeWidth={1.8} />
+                    Delete Folder
+                  </button>
                 </div>
               )}
             </div>

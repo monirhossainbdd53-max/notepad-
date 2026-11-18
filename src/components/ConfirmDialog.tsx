@@ -212,33 +212,39 @@ export function FolderPickerDialog({
         </div>
 
         <div className="divide-y divide-[var(--divider)] max-h-72 overflow-y-auto">
-          {folders.map((folder) => {
-            const active = folder.id === selectedFolderId;
-            return (
-              <button
-                key={folder.id}
-                type="button"
-                onClick={() => {
-                  onSelect(folder.id);
-                  onClose();
-                }}
-                className="flex w-full min-h-[48px] items-center justify-between py-2.5 px-1 text-left transition-colors hover:bg-[var(--bg-subtle)] rounded-lg cursor-pointer"
-              >
-                <span className="flex items-center gap-3 text-sm font-medium text-[var(--text-primary)]">
-                  <FolderIcon
-                    className={`h-4 w-4 ${
-                      active ? 'text-[var(--accent-primary)]' : 'text-[var(--text-secondary)]'
-                    }`}
-                    strokeWidth={1.75}
-                  />
-                  {folder.name}
-                </span>
-                {active && (
-                  <Check className="h-4 w-4 text-[var(--accent-primary)]" strokeWidth={2.25} />
-                )}
-              </button>
-            );
-          })}
+          {folders.length === 0 ? (
+            <p className="py-6 text-center text-sm text-[var(--text-secondary)]">
+              No folders yet. Create one in Folders first.
+            </p>
+          ) : (
+            folders.map((folder) => {
+              const active = folder.id === selectedFolderId;
+              return (
+                <button
+                  key={folder.id}
+                  type="button"
+                  onClick={() => {
+                    onSelect(folder.id);
+                    onClose();
+                  }}
+                  className="flex w-full min-h-[48px] items-center justify-between py-2.5 px-1 text-left transition-colors hover:bg-[var(--bg-subtle)] rounded-lg cursor-pointer"
+                >
+                  <span className="flex items-center gap-3 text-sm font-medium text-[var(--text-primary)]">
+                    <FolderIcon
+                      className={`h-4 w-4 ${
+                        active ? 'text-[var(--accent-primary)]' : 'text-[var(--text-secondary)]'
+                      }`}
+                      strokeWidth={1.75}
+                    />
+                    {folder.name}
+                  </span>
+                  {active && (
+                    <Check className="h-4 w-4 text-[var(--accent-primary)]" strokeWidth={2.25} />
+                  )}
+                </button>
+              );
+            })
+          )}
         </div>
       </div>
     </div>

@@ -103,7 +103,7 @@ export function AccountScreen() {
       <ConfirmDialog
         open={resetOpen}
         title="Reset Workspace?"
-        description="This will restore the default sample notes and folders on this device."
+        description="This will clear all locally stored notes and folders on this device."
         confirmLabel="Reset Data"
         onConfirm={resetLocalData}
         onClose={() => setResetOpen(false)}

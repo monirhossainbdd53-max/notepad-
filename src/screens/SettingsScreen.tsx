@@ -165,7 +165,7 @@ export function SettingsScreen() {
                 Default Folder
               </span>
               <span className="flex items-center gap-1.5 text-xs text-[var(--text-secondary)]">
-                <span>{defaultFolder?.name || 'Personal'}</span>
+                <span>{defaultFolder?.name || 'None'}</span>
                 <ChevronRight className="h-4 w-4" strokeWidth={1.75} />
               </span>
             </button>

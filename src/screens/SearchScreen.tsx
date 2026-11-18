@@ -126,24 +126,38 @@ export function SearchScreen() {
               </div>
             )}
 
-            <div className="mt-8">
-              <h2 className="text-xs font-semibold text-[var(--text-secondary)] mb-3">
-                Quick Suggestions
-              </h2>
-              <div className="rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] divide-y divide-[var(--divider)]">
-                {activeNotes.slice(0, 4).map((note) => (
-                  <button
-                    key={note.id}
-                    type="button"
-                    onClick={() => navigate('note-details', { noteId: note.id })}
-                    className="flex w-full min-h-[48px] items-center gap-3 px-4 text-left text-sm text-[var(--text-primary)] hover:bg-[var(--bg-subtle)]/60 transition-colors cursor-pointer"
-                  >
-                    <Search className="h-4 w-4 shrink-0 text-[var(--text-secondary)]" strokeWidth={1.75} />
-                    <span className="truncate">{note.title || 'Untitled Note'}</span>
-                  </button>
-                ))}
+            {activeNotes.length > 0 ? (
+              <div className="mt-8">
+                <h2 className="text-xs font-semibold text-[var(--text-secondary)] mb-3">
+                  Quick Suggestions
+                </h2>
+                <div className="rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] divide-y divide-[var(--divider)]">
+                  {activeNotes.slice(0, 4).map((note) => (
+                    <button
+                      key={note.id}
+                      type="button"
+                      onClick={() => navigate('note-details', { noteId: note.id })}
+                      className="flex w-full min-h-[48px] items-center gap-3 px-4 text-left text-sm text-[var(--text-primary)] hover:bg-[var(--bg-subtle)]/60 transition-colors cursor-pointer"
+                    >
+                      <Search className="h-4 w-4 shrink-0 text-[var(--text-secondary)]" strokeWidth={1.75} />
+                      <span className="truncate">{note.title || 'Untitled Note'}</span>
+                    </button>
+                  ))}
+                </div>
               </div>
-            </div>
+            ) : (
+              recentSearches.length === 0 && (
+                <div className="mt-16 flex flex-col items-center text-center px-4">
+                  <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] text-[var(--text-secondary)]">
+                    <Search className="h-6 w-6" strokeWidth={1.6} />
+                  </div>
+                  <h2 className="mt-4 text-base font-semibold">Nothing to search yet</h2>
+                  <p className="mt-1 text-sm text-[var(--text-secondary)] max-w-xs">
+                    Create notes or folders to search across them here.
+                  </p>
+                </div>
+              )
+            )}
           </div>
         ) : matchingFolders.length === 0 && matchingNotes.length === 0 ? (
           <div className="mt-16 flex flex-col items-center text-center px-4">
