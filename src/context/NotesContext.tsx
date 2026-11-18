@@ -1,0 +1,651 @@
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import {
+  DEFAULT_FOLDERS,
+  INITIAL_ACCOUNT,
+  INITIAL_NOTES,
+  INITIAL_RECENT_SEARCHES,
+} from '../data/initialData';
+import {
+  Folder,
+  Note,
+  NotificationSettings,
+  ScreenName,
+  ThemePreference,
+  ToastMessage,
+  UserAccount,
+} from '../types/notes';
+import { generateId } from '../utils/noteHelpers';
+
+const STORAGE_KEY = 'notes_app_state_v1';
+
+interface PersistedState {
+  notes: Note[];
+  folders: Folder[];
+  theme: ThemePreference;
+  defaultFolderId: string;
+  notifications: NotificationSettings;
+  account: UserAccount;
+  recentSearches: string[];
+  hasOnboarded: boolean;
+}
+
+interface NavigateOptions {
+  noteId?: string | null;
+  folderId?: string | null;
+  replace?: boolean;
+}
+
+interface NotesContextValue {
+  screen: ScreenName;
+  navigate: (next: ScreenName, options?: NavigateOptions) => void;
+  goBack: () => void;
+  canGoBack: boolean;
+  activeNoteId: string | null;
+  activeFolderId: string | null;
+  setActiveFolderId: (id: string | null) => void;
+  notes: Note[];
+  activeNotes: Note[];
+  pinnedNotes: Note[];
+  favoriteNotes: Note[];
+  archivedNotes: Note[];
+  trashedNotes: Note[];
+  folders: Folder[];
+  theme: ThemePreference;
+  resolvedTheme: 'light' | 'dark';
+  setTheme: (theme: ThemePreference) => void;
+  defaultFolderId: string;
+  setDefaultFolderId: (folderId: string) => void;
+  notifications: NotificationSettings;
+  updateNotifications: (patch: Partial<NotificationSettings>) => void;
+  account: UserAccount;
+  updateAccount: (patch: Partial<UserAccount>) => void;
+  recentSearches: string[];
+  addRecentSearch: (query: string) => void;
+  clearRecentSearches: () => void;
+  hasOnboarded: boolean;
+  completeOnboarding: () => void;
+  createNote: (partial?: Partial<Note>) => Note;
+  updateNote: (id: string, patch: Partial<Note>) => void;
+  togglePinNote: (id: string) => void;
+  toggleFavoriteNote: (id: string) => void;
+  moveNoteToFolder: (id: string, folderId: string) => void;
+  archiveNote: (id: string) => void;
+  restoreArchivedNote: (id: string) => void;
+  deleteNote: (id: string) => void;
+  restoreDeletedNote: (id: string) => void;
+  permanentlyDeleteNote: (id: string) => void;
+  emptyTrash: () => void;
+  createFolder: (name: string) => Folder;
+  renameFolder: (id: string, name: string) => void;
+  deleteFolder: (id: string) => void;
+  getFolderById: (id: string) => Folder | undefined;
+  getNoteById: (id: string) => Note | undefined;
+  getFolderNoteCount: (folderId: string) => number;
+  resetLocalData: () => void;
+  toast: ToastMessage | null;
+  showToast: (text: string, variant?: 'default' | 'danger') => void;
+  dismissToast: () => void;
+}
+
+const defaultPersistedState: PersistedState = {
+  notes: INITIAL_NOTES,
+  folders: DEFAULT_FOLDERS,
+  theme: 'light',
+  defaultFolderId: 'folder_personal',
+  notifications: {
+    dailyReminder: false,
+    weeklyDigest: true,
+    subtleSounds: true,
+  },
+  account: INITIAL_ACCOUNT,
+  recentSearches: INITIAL_RECENT_SEARCHES,
+  hasOnboarded: false,
+};
+
+function loadInitialState(): PersistedState {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return defaultPersistedState;
+    const parsed = JSON.parse(raw) as Partial<PersistedState>;
+    return {
+      notes: Array.isArray(parsed.notes) ? parsed.notes : defaultPersistedState.notes,
+      folders:
+        Array.isArray(parsed.folders) && parsed.folders.length > 0
+          ? parsed.folders
+          : defaultPersistedState.folders,
+      theme: parsed.theme || 'light',
+      defaultFolderId: parsed.defaultFolderId || 'folder_personal',
+      notifications: {
+        ...defaultPersistedState.notifications,
+        ...(parsed.notifications || {}),
+      },
+      account: {
+        ...defaultPersistedState.account,
+        ...(parsed.account || {}),
+      },
+      recentSearches: Array.isArray(parsed.recentSearches)
+        ? parsed.recentSearches
+        : defaultPersistedState.recentSearches,
+      hasOnboarded: Boolean(parsed.hasOnboarded),
+    };
+  } catch {
+    return defaultPersistedState;
+  }
+}
+
+interface HistoryEntry {
+  screen: ScreenName;
+  noteId: string | null;
+  folderId: string | null;
+}
+
+const NotesContext = createContext<NotesContextValue | undefined>(undefined);
+
+export function NotesProvider({ children }: { children: React.ReactNode }) {
+  const [initial] = useState<PersistedState>(() => loadInitialState());
+
+  const [notes, setNotes] = useState<Note[]>(initial.notes);
+  const [folders, setFolders] = useState<Folder[]>(initial.folders);
+  const [theme, setThemeState] = useState<ThemePreference>(initial.theme);
+  const [systemDark, setSystemDark] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    return window.matchMedia('(prefers-color-scheme: dark)').matches;
+  });
+  const [defaultFolderId, setDefaultFolderIdState] = useState<string>(initial.defaultFolderId);
+  const [notifications, setNotifications] = useState<NotificationSettings>(initial.notifications);
+  const [account, setAccount] = useState<UserAccount>(initial.account);
+  const [recentSearches, setRecentSearches] = useState<string[]>(initial.recentSearches);
+  const [hasOnboarded, setHasOnboarded] = useState<boolean>(initial.hasOnboarded);
+
+  const [history, setHistory] = useState<HistoryEntry[]>([
+    {
+      screen: initial.hasOnboarded ? 'home' : 'splash',
+      noteId: null,
+      folderId: null,
+    },
+  ]);
+
+  const [toast, setToast] = useState<ToastMessage | null>(null);
+
+  const currentEntry = history[history.length - 1];
+  const screen = currentEntry.screen;
+  const activeNoteId = currentEntry.noteId;
+  const activeFolderId = currentEntry.folderId;
+
+  // Persist state to localStorage
+  useEffect(() => {
+    try {
+      const payload: PersistedState = {
+        notes,
+        folders,
+        theme,
+        defaultFolderId,
+        notifications,
+        account,
+        recentSearches,
+        hasOnboarded,
+      };
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+    } catch {
+      // Ignore storage quota errors
+    }
+  }, [notes, folders, theme, defaultFolderId, notifications, account, recentSearches, hasOnboarded]);
+
+  // Listen to system dark mode changes
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const mq = window.matchMedia('(prefers-color-scheme: dark)');
+    const onChange = (e: MediaQueryListEvent) => setSystemDark(e.matches);
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
+
+  const resolvedTheme: 'light' | 'dark' =
+    theme === 'system' ? (systemDark ? 'dark' : 'light') : theme;
+
+  // Apply .dark class to <html>
+  useEffect(() => {
+    const root = document.documentElement;
+    if (resolvedTheme === 'dark') {
+      root.classList.add('dark');
+    } else {
+      root.classList.remove('dark');
+    }
+  }, [resolvedTheme]);
+
+  // Auto-dismiss toast
+  useEffect(() => {
+    if (!toast) return;
+    const timer = window.setTimeout(() => setToast(null), 2600);
+    return () => window.clearTimeout(timer);
+  }, [toast]);
+
+  const showToast = useCallback((text: string, variant: 'default' | 'danger' = 'default') => {
+    setToast({ id: generateId('toast'), text, variant });
+  }, []);
+
+  const dismissToast = useCallback(() => setToast(null), []);
+
+  const navigate = useCallback((next: ScreenName, options?: NavigateOptions) => {
+    setHistory((prev) => {
+      const current = prev[prev.length - 1];
+      const nextEntry: HistoryEntry = {
+        screen: next,
+        noteId: options?.noteId !== undefined ? options.noteId : current.noteId,
+        folderId: options?.folderId !== undefined ? options.folderId : current.folderId,
+      };
+
+      // Top-level tabs reset deep stack cleanly
+      const topTabs: ScreenName[] = ['home', 'folders', 'favorites', 'settings'];
+      if (topTabs.includes(next) && !options?.replace) {
+        return [{ screen: next, noteId: null, folderId: null }];
+      }
+
+      if (options?.replace) {
+        return [...prev.slice(0, -1), nextEntry];
+      }
+
+      // Avoid pushing identical duplicate screen
+      if (
+        current.screen === nextEntry.screen &&
+        current.noteId === nextEntry.noteId &&
+        current.folderId === nextEntry.folderId
+      ) {
+        return prev;
+      }
+
+      return [...prev, nextEntry];
+    });
+    window.scrollTo({ top: 0, behavior: 'instant' as ScrollBehavior });
+  }, []);
+
+  const goBack = useCallback(() => {
+    setHistory((prev) => {
+      if (prev.length <= 1) {
+        return [{ screen: 'home', noteId: null, folderId: null }];
+      }
+      return prev.slice(0, -1);
+    });
+  }, []);
+
+  const setActiveFolderId = useCallback((id: string | null) => {
+    setHistory((prev) => {
+      const last = prev[prev.length - 1];
+      return [...prev.slice(0, -1), { ...last, folderId: id }];
+    });
+  }, []);
+
+  const completeOnboarding = useCallback(() => {
+    setHasOnboarded(true);
+    setHistory([{ screen: 'home', noteId: null, folderId: null }]);
+  }, []);
+
+  const setTheme = useCallback((nextTheme: ThemePreference) => {
+    setThemeState(nextTheme);
+  }, []);
+
+  const setDefaultFolderId = useCallback(
+    (folderId: string) => {
+      setDefaultFolderIdState(folderId);
+      showToast('Default folder updated');
+    },
+    [showToast]
+  );
+
+  const updateNotifications = useCallback((patch: Partial<NotificationSettings>) => {
+    setNotifications((prev) => ({ ...prev, ...patch }));
+  }, []);
+
+  const updateAccount = useCallback(
+    (patch: Partial<UserAccount>) => {
+      setAccount((prev) => ({ ...prev, ...patch }));
+      showToast('Profile updated');
+    },
+    [showToast]
+  );
+
+  const addRecentSearch = useCallback((query: string) => {
+    const trimmed = query.trim();
+    if (!trimmed) return;
+    setRecentSearches((prev) => {
+      const filtered = prev.filter((q) => q.toLowerCase() !== trimmed.toLowerCase());
+      return [trimmed, ...filtered].slice(0, 6);
+    });
+  }, []);
+
+  const clearRecentSearches = useCallback(() => {
+    setRecentSearches([]);
+  }, []);
+
+  const createNote = useCallback(
+    (partial?: Partial<Note>): Note => {
+      const nowIso = new Date().toISOString();
+      const targetFolder =
+        partial?.folderId && folders.some((f) => f.id === partial.folderId)
+          ? partial.folderId
+          : folders.some((f) => f.id === defaultFolderId)
+          ? defaultFolderId
+          : folders[0]?.id || 'folder_personal';
+
+      const newNote: Note = {
+        id: generateId('note'),
+        title: partial?.title ?? '',
+        content: partial?.content ?? '',
+        folderId: targetFolder,
+        isPinned: partial?.isPinned ?? false,
+        isFavorite: partial?.isFavorite ?? false,
+        isArchived: false,
+        isDeleted: false,
+        createdAt: nowIso,
+        updatedAt: nowIso,
+      };
+      setNotes((prev) => [newNote, ...prev]);
+      return newNote;
+    },
+    [defaultFolderId, folders]
+  );
+
+  const updateNote = useCallback((id: string, patch: Partial<Note>) => {
+    setNotes((prev) =>
+      prev.map((note) =>
+        note.id === id
+          ? {
+              ...note,
+              ...patch,
+              updatedAt: patch.updatedAt ?? new Date().toISOString(),
+            }
+          : note
+      )
+    );
+  }, []);
+
+  const togglePinNote = useCallback(
+    (id: string) => {
+      setNotes((prev) =>
+        prev.map((n) => {
+          if (n.id !== id) return n;
+          const nextPinned = !n.isPinned;
+          showToast(nextPinned ? 'Note pinned' : 'Note unpinned');
+          return { ...n, isPinned: nextPinned };
+        })
+      );
+    },
+    [showToast]
+  );
+
+  const toggleFavoriteNote = useCallback(
+    (id: string) => {
+      setNotes((prev) =>
+        prev.map((n) => {
+          if (n.id !== id) return n;
+          const nextFav = !n.isFavorite;
+          showToast(nextFav ? 'Added to Favorites' : 'Removed from Favorites');
+          return { ...n, isFavorite: nextFav };
+        })
+      );
+    },
+    [showToast]
+  );
+
+  const moveNoteToFolder = useCallback(
+    (id: string, folderId: string) => {
+      const target = folders.find((f) => f.id === folderId);
+      setNotes((prev) =>
+        prev.map((n) =>
+          n.id === id ? { ...n, folderId, updatedAt: new Date().toISOString() } : n
+        )
+      );
+      if (target) showToast(`Moved to ${target.name}`);
+    },
+    [folders, showToast]
+  );
+
+  const archiveNote = useCallback(
+    (id: string) => {
+      setNotes((prev) =>
+        prev.map((n) =>
+          n.id === id
+            ? {
+                ...n,
+                isArchived: true,
+                isPinned: false,
+                updatedAt: new Date().toISOString(),
+              }
+            : n
+        )
+      );
+      showToast('Note archived');
+    },
+    [showToast]
+  );
+
+  const restoreArchivedNote = useCallback(
+    (id: string) => {
+      setNotes((prev) =>
+        prev.map((n) =>
+          n.id === id
+            ? { ...n, isArchived: false, updatedAt: new Date().toISOString() }
+            : n
+        )
+      );
+      showToast('Note restored');
+    },
+    [showToast]
+  );
+
+  const deleteNote = useCallback(
+    (id: string) => {
+      setNotes((prev) =>
+        prev.map((n) =>
+          n.id === id
+            ? {
+                ...n,
+                isDeleted: true,
+                isPinned: false,
+                isArchived: false,
+                deletedAt: new Date().toISOString(),
+              }
+            : n
+        )
+      );
+      showToast('Note moved to Trash');
+    },
+    [showToast]
+  );
+
+  const restoreDeletedNote = useCallback(
+    (id: string) => {
+      setNotes((prev) =>
+        prev.map((n) =>
+          n.id === id
+            ? {
+                ...n,
+                isDeleted: false,
+                deletedAt: undefined,
+                updatedAt: new Date().toISOString(),
+              }
+            : n
+        )
+      );
+      showToast('Note restored');
+    },
+    [showToast]
+  );
+
+  const permanentlyDeleteNote = useCallback(
+    (id: string) => {
+      setNotes((prev) => prev.filter((n) => n.id !== id));
+      showToast('Note permanently deleted', 'danger');
+    },
+    [showToast]
+  );
+
+  const emptyTrash = useCallback(() => {
+    setNotes((prev) => prev.filter((n) => !n.isDeleted));
+    showToast('Trash emptied', 'danger');
+  }, [showToast]);
+
+  const createFolder = useCallback(
+    (name: string): Folder => {
+      const trimmed = name.trim() || 'Untitled Folder';
+      const newFolder: Folder = {
+        id: generateId('folder'),
+        name: trimmed,
+        createdAt: new Date().toISOString(),
+      };
+      setFolders((prev) => [...prev, newFolder]);
+      showToast(`Folder "${trimmed}" created`);
+      return newFolder;
+    },
+    [showToast]
+  );
+
+  const renameFolder = useCallback(
+    (id: string, name: string) => {
+      const trimmed = name.trim();
+      if (!trimmed) return;
+      setFolders((prev) => prev.map((f) => (f.id === id ? { ...f, name: trimmed } : f)));
+      showToast('Folder renamed');
+    },
+    [showToast]
+  );
+
+  const deleteFolder = useCallback(
+    (id: string) => {
+      const remaining = folders.filter((f) => f.id !== id);
+      const fallbackId = remaining[0]?.id || 'folder_personal';
+      setFolders(remaining);
+      setNotes((prev) =>
+        prev.map((n) => (n.folderId === id ? { ...n, folderId: fallbackId } : n))
+      );
+      if (defaultFolderId === id) {
+        setDefaultFolderIdState(fallbackId);
+      }
+      showToast('Folder deleted');
+    },
+    [defaultFolderId, folders, showToast]
+  );
+
+  const resetLocalData = useCallback(() => {
+    setNotes(INITIAL_NOTES);
+    setFolders(DEFAULT_FOLDERS);
+    setAccount(INITIAL_ACCOUNT);
+    setRecentSearches(INITIAL_RECENT_SEARCHES);
+    setDefaultFolderIdState('folder_personal');
+    showToast('Workspace reset to defaults');
+  }, [showToast]);
+
+  const activeNotes = useMemo(
+    () =>
+      notes
+        .filter((n) => !n.isArchived && !n.isDeleted)
+        .sort((a, b) => {
+          if (a.isPinned !== b.isPinned) return a.isPinned ? -1 : 1;
+          return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+        }),
+    [notes]
+  );
+
+  const pinnedNotes = useMemo(
+    () => activeNotes.filter((n) => n.isPinned),
+    [activeNotes]
+  );
+
+  const favoriteNotes = useMemo(
+    () => activeNotes.filter((n) => n.isFavorite),
+    [activeNotes]
+  );
+
+  const archivedNotes = useMemo(
+    () =>
+      notes
+        .filter((n) => n.isArchived && !n.isDeleted)
+        .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()),
+    [notes]
+  );
+
+  const trashedNotes = useMemo(
+    () =>
+      notes
+        .filter((n) => n.isDeleted)
+        .sort(
+          (a, b) =>
+            new Date(b.deletedAt || b.updatedAt).getTime() -
+            new Date(a.deletedAt || a.updatedAt).getTime()
+        ),
+    [notes]
+  );
+
+  const getFolderById = useCallback(
+    (id: string) => folders.find((f) => f.id === id),
+    [folders]
+  );
+
+  const getNoteById = useCallback((id: string) => notes.find((n) => n.id === id), [notes]);
+
+  const getFolderNoteCount = useCallback(
+    (folderId: string) =>
+      notes.filter((n) => !n.isArchived && !n.isDeleted && n.folderId === folderId).length,
+    [notes]
+  );
+
+  const value: NotesContextValue = {
+    screen,
+    navigate,
+    goBack,
+    canGoBack: history.length > 1,
+    activeNoteId,
+    activeFolderId,
+    setActiveFolderId,
+    notes,
+    activeNotes,
+    pinnedNotes,
+    favoriteNotes,
+    archivedNotes,
+    trashedNotes,
+    folders,
+    theme,
+    resolvedTheme,
+    setTheme,
+    defaultFolderId,
+    setDefaultFolderId,
+    notifications,
+    updateNotifications,
+    account,
+    updateAccount,
+    recentSearches,
+    addRecentSearch,
+    clearRecentSearches,
+    hasOnboarded,
+    completeOnboarding,
+    createNote,
+    updateNote,
+    togglePinNote,
+    toggleFavoriteNote,
+    moveNoteToFolder,
+    archiveNote,
+    restoreArchivedNote,
+    deleteNote,
+    restoreDeletedNote,
+    permanentlyDeleteNote,
+    emptyTrash,
+    createFolder,
+    renameFolder,
+    deleteFolder,
+    getFolderById,
+    getNoteById,
+    getFolderNoteCount,
+    resetLocalData,
+    toast,
+    showToast,
+    dismissToast,
+  };
+
+  return <NotesContext.Provider value={value}>{children}</NotesContext.Provider>;
+}
+
+export function useNotes() {
+  const ctx = useContext(NotesContext);
+  if (!ctx) throw new Error('useNotes must be used within NotesProvider');
+  return ctx;
+}

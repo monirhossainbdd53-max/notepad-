@@ -1,0 +1,204 @@
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  ChevronLeft,
+  Edit2,
+  Folder as FolderIcon,
+  MoreHorizontal,
+  Plus,
+  Search,
+  Trash2,
+} from 'lucide-react';
+import { ConfirmDialog, FolderNameDialog } from '../components/ConfirmDialog';
+import { NavigationShell } from '../components/NavigationShell';
+import { NoteCard } from '../components/NoteCard';
+import { useNotes } from '../context/NotesContext';
+
+export function FolderDetailsScreen() {
+  const {
+    activeFolderId,
+    activeNotes,
+    folders,
+    getFolderById,
+    renameFolder,
+    deleteFolder,
+    createNote,
+    navigate,
+    goBack,
+  } = useNotes();
+
+  const folder = activeFolderId ? getFolderById(activeFolderId) : undefined;
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const onOutside = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false);
+      }
+    };
+    if (menuOpen) document.addEventListener('mousedown', onOutside);
+    return () => document.removeEventListener('mousedown', onOutside);
+  }, [menuOpen]);
+
+  const folderNotes = useMemo(
+    () => (folder ? activeNotes.filter((n) => n.folderId === folder.id) : []),
+    [activeNotes, folder]
+  );
+
+  if (!folder) {
+    return (
+      <NavigationShell showMobileTabs>
+        <div className="p-8 text-center">
+          <p className="text-sm text-[#858585]">Folder not found.</p>
+          <button
+            type="button"
+            onClick={() => navigate('folders')}
+            className="mt-4 min-h-[44px] rounded-full bg-[#202124] dark:bg-[#D9A928] px-5 text-sm font-semibold text-white dark:text-[#171717] cursor-pointer"
+          >
+            Back to Folders
+          </button>
+        </div>
+      </NavigationShell>
+    );
+  }
+
+  const handleNewNoteInFolder = () => {
+    const note = createNote({ folderId: folder.id });
+    navigate('create-note', { noteId: note.id });
+  };
+
+  return (
+    <NavigationShell showMobileTabs showFab fabFolderId={folder.id}>
+      <header className="sticky top-0 z-20 bg-[#F8F7F5]/95 dark:bg-[#171717]/95 backdrop-blur-md px-4 sm:px-8 pt-5 pb-3">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2 min-w-0">
+            <button
+              type="button"
+              onClick={goBack}
+              aria-label="Back"
+              className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-full text-[#202124] dark:text-[#F4F4F2] hover:bg-[#EEEEEC]/70 dark:hover:bg-[#222222] cursor-pointer shrink-0"
+            >
+              <ChevronLeft className="h-5 w-5" strokeWidth={2} />
+            </button>
+            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-[#202124] dark:text-[#F4F4F2] truncate">
+              {folder.name}
+            </h1>
+          </div>
+
+          <div className="flex items-center gap-1 shrink-0">
+            <button
+              type="button"
+              onClick={() => navigate('search')}
+              aria-label="Search"
+              className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-full text-[#202124] dark:text-[#F4F4F2] hover:bg-[#EEEEEC]/70 dark:hover:bg-[#222222] cursor-pointer"
+            >
+              <Search className="h-5 w-5" strokeWidth={1.85} />
+            </button>
+
+            <div className="relative" ref={menuRef}>
+              <button
+                type="button"
+                onClick={() => setMenuOpen((v) => !v)}
+                aria-label="Folder options"
+                className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-full text-[#202124] dark:text-[#F4F4F2] hover:bg-[#EEEEEC]/70 dark:hover:bg-[#222222] cursor-pointer"
+              >
+                <MoreHorizontal className="h-5 w-5" strokeWidth={1.85} />
+              </button>
+
+              {menuOpen && (
+                <div className="absolute right-0 mt-1.5 w-44 rounded-2xl bg-white dark:bg-[#222222] border border-[#EEEEEC] dark:border-[#2E2E2B] py-1.5 z-40">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMenuOpen(false);
+                      setRenameOpen(true);
+                    }}
+                    className="flex w-full min-h-[42px] items-center gap-2.5 px-4 text-sm text-[#202124] dark:text-[#F4F4F2] hover:bg-[#F8F7F5] dark:hover:bg-[#2B2B29] cursor-pointer"
+                  >
+                    <Edit2 className="h-4 w-4 text-[#858585]" strokeWidth={1.8} />
+                    Rename Folder
+                  </button>
+
+                  {folders.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMenuOpen(false);
+                        setDeleteOpen(true);
+                      }}
+                      className="flex w-full min-h-[42px] items-center gap-2.5 px-4 text-sm text-[#E45B5B] hover:bg-[#F8F7F5] dark:hover:bg-[#2B2B29] cursor-pointer"
+                    >
+                      <Trash2 className="h-4 w-4" strokeWidth={1.8} />
+                      Delete Folder
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <p className="mt-1 text-xs text-[#858585] dark:text-[#9A9A96] pl-12 tabular-nums">
+          {folderNotes.length} {folderNotes.length === 1 ? 'note' : 'notes'}
+        </p>
+      </header>
+
+      <section className="px-5 sm:px-8 pt-3">
+        {folderNotes.length === 0 ? (
+          <div className="mt-16 flex flex-col items-center text-center px-4">
+            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-white dark:bg-[#222222] border border-[#EEEEEC] dark:border-[#2E2E2B] text-[#D9A928]">
+              <FolderIcon className="h-6 w-6" strokeWidth={1.75} />
+            </div>
+            <h2 className="mt-4 text-base font-semibold">This folder is empty</h2>
+            <p className="mt-1 text-sm text-[#858585] max-w-xs">
+              Add a new note directly into {folder.name}.
+            </p>
+            <button
+              type="button"
+              onClick={handleNewNoteInFolder}
+              className="mt-5 inline-flex min-h-[44px] items-center gap-2 rounded-full bg-[#202124] dark:bg-[#D9A928] px-5 text-sm font-semibold text-white dark:text-[#171717] cursor-pointer"
+            >
+              <Plus className="h-4 w-4" strokeWidth={2.2} />
+              New Note
+            </button>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+            {folderNotes.map((note) => (
+              <NoteCard
+                key={note.id}
+                note={note}
+                folder={folder}
+                showFolderName={false}
+                onClick={() => navigate('note-details', { noteId: note.id })}
+              />
+            ))}
+          </div>
+        )}
+      </section>
+
+      <FolderNameDialog
+        open={renameOpen}
+        title="Rename Folder"
+        initialValue={folder.name}
+        confirmLabel="Rename"
+        onSubmit={(name) => renameFolder(folder.id, name)}
+        onClose={() => setRenameOpen(false)}
+      />
+
+      <ConfirmDialog
+        open={deleteOpen}
+        title={`Delete "${folder.name}"?`}
+        description="Notes inside this folder will be moved to your first available folder."
+        confirmLabel="Delete Folder"
+        onConfirm={() => {
+          deleteFolder(folder.id);
+          navigate('folders');
+        }}
+        onClose={() => setDeleteOpen(false)}
+      />
+    </NavigationShell>
+  );
+}
