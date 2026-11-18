@@ -95,9 +95,25 @@
     --divider: #2B323D;
   }
 
+  :root {
+    --note-font-size: 16px;
+  }
+
+  [data-note-size="small"] {
+    --note-font-size: 14.5px;
+  }
+
+  [data-note-size="medium"] {
+    --note-font-size: 16px;
+  }
+
+  [data-note-size="large"] {
+    --note-font-size: 18.5px;
+  }
+
   html,
   body {
-    font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-family: 'Plus Jakarta Sans', 'Noto Sans Bengali', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     background-color: var(--bg-canvas);
     color: var(--text-primary);
     -webkit-tap-highlight-color: transparent;
@@ -106,6 +122,7 @@
 
 /* Rich-text note editor & detail formatting */
 .note-content {
+  font-size: var(--note-font-size);
   line-height: 1.65;
   word-break: break-word;
 }
@@ -268,10 +285,82 @@
   cursor: zoom-in;
 }
 
+.note-content hr {
+  border: none;
+  height: 1px;
+  background-color: var(--divider);
+  margin: 1.25rem 0;
+}
+
+.note-content a {
+  color: var(--accent-primary);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.note-content table.note-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.9rem 0;
+  border-radius: 0.75rem;
+  overflow: hidden;
+  border: 1px solid var(--divider);
+  background-color: var(--bg-card);
+  font-size: 0.92em;
+}
+
+.note-content table.note-table th,
+.note-content table.note-table td {
+  border: 1px solid var(--divider);
+  padding: 0.55rem 0.75rem;
+  text-align: left;
+  min-width: 72px;
+  vertical-align: top;
+}
+
+.note-content table.note-table th {
+  background-color: var(--bg-subtle);
+  font-weight: 600;
+}
+
+.note-content mark.find-match {
+  background-color: var(--accent-soft);
+  color: var(--text-primary);
+  border-radius: 0.25rem;
+  padding: 0 2px;
+}
+
+.note-content mark.find-match-active {
+  background-color: var(--accent-primary);
+  color: #171717;
+}
+
 .no-scrollbar::-webkit-scrollbar {
   display: none;
 }
 .no-scrollbar {
   -ms-overflow-style: none;
   scrollbar-width: none;
+}
+
+@media print {
+  body {
+    background: #ffffff !important;
+    color: #111111 !important;
+  }
+  aside,
+  nav,
+  header,
+  button,
+  .print-hide {
+    display: none !important;
+  }
+  .note-image-controls {
+    display: none !important;
+  }
+  main {
+    padding: 0 !important;
+    margin: 0 !important;
+    max-width: 100% !important;
+  }
 }

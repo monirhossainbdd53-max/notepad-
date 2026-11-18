@@ -24,6 +24,8 @@ export type ThemePreference = 'light' | 'dark' | 'system';
 
 export type ThemePalette = 'default' | 'sepia' | 'sage' | 'slate';
 
+export type NoteFontSize = 'small' | 'medium' | 'large';
+
 export type NoteSortOption = 'updated' | 'title' | 'pinned';
 
 export const FREE_LIMITS = {

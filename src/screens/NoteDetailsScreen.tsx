@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Archive,
   ChevronLeft,
@@ -8,6 +8,8 @@ import {
   Lock,
   MoreHorizontal,
   Pin,
+  Printer,
+  Search,
   Share2,
   Star,
   Trash2,
@@ -25,6 +27,61 @@ import {
   stripHtmlToText,
   toggleChecklistItemInHtml,
 } from '../utils/noteHelpers';
+
+function highlightSearchMatches(html: string, query: string): { html: string; count: number } {
+  const q = query.trim();
+  if (!q || typeof window === 'undefined') return { html, count: 0 };
+
+  const container = document.createElement('div');
+  container.innerHTML = html;
+
+  const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const regex = new RegExp(escaped, 'gi');
+  let count = 0;
+
+  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, null);
+  const textNodes: Text[] = [];
+  let current: Node | null = walker.nextNode();
+  while (current) {
+    const parentEl = current.parentElement;
+    if (
+      parentEl &&
+      !parentEl.closest('.note-image-controls') &&
+      current.nodeValue &&
+      regex.test(current.nodeValue)
+    ) {
+      textNodes.push(current as Text);
+    }
+    regex.lastIndex = 0;
+    current = walker.nextNode();
+  }
+
+  textNodes.forEach((node) => {
+    const val = node.nodeValue || '';
+    regex.lastIndex = 0;
+    const frag = document.createDocumentFragment();
+    let lastIdx = 0;
+    let match: RegExpExecArray | null = regex.exec(val);
+    while (match) {
+      if (match.index > lastIdx) {
+        frag.appendChild(document.createTextNode(val.slice(lastIdx, match.index)));
+      }
+      const mark = document.createElement('mark');
+      mark.className = 'find-match';
+      mark.textContent = match[0];
+      frag.appendChild(mark);
+      count += 1;
+      lastIdx = match.index + match[0].length;
+      match = regex.exec(val);
+    }
+    if (lastIdx < val.length) {
+      frag.appendChild(document.createTextNode(val.slice(lastIdx)));
+    }
+    node.parentNode?.replaceChild(frag, node);
+  });
+
+  return { html: container.innerHTML, count };
+}
 
 export function NoteDetailsScreen() {
   const {
@@ -59,7 +116,16 @@ export function NoteDetailsScreen() {
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
   const [pinVerifyOpen, setPinVerifyOpen] = useState(false);
   const [pinCreateOpen, setPinCreateOpen] = useState(false);
+  const [findOpen, setFindOpen] = useState(false);
+  const [findQuery, setFindQuery] = useState('');
   const menuRef = useRef<HTMLDivElement>(null);
+
+  const highlightedResult = useMemo(() => {
+    if (!note || !findOpen || !findQuery.trim()) {
+      return { html: note?.content || '', count: 0 };
+    }
+    return highlightSearchMatches(note.content, findQuery);
+  }, [findOpen, findQuery, note]);
 
   useEffect(() => {
     const onOutside = (e: MouseEvent) => {
@@ -285,6 +351,18 @@ export function NoteDetailsScreen() {
 
                   <button
                     type="button"
+                    onClick={() => {
+                      setMenuOpen(false);
+                      setFindOpen(true);
+                    }}
+                    className="flex w-full min-h-[42px] items-center gap-2.5 px-4 text-sm text-[var(--text-primary)] hover:bg-[var(--bg-subtle)] cursor-pointer"
+                  >
+                    <Search className="h-4 w-4 text-[var(--text-secondary)]" strokeWidth={1.8} />
+                    Find in Note
+                  </button>
+
+                  <button
+                    type="button"
                     onClick={handleToggleLock}
                     className="flex w-full min-h-[42px] items-center justify-between px-4 text-sm text-[var(--text-primary)] hover:bg-[var(--bg-subtle)] cursor-pointer"
                   >
@@ -343,6 +421,40 @@ export function NoteDetailsScreen() {
           </div>
         </header>
 
+        {/* Compact Find in Note Bar */}
+        {findOpen && (
+          <div className="print-hide border-b border-[var(--divider)] bg-[var(--bg-card)] px-4 sm:px-8 py-2.5">
+            <div className="max-w-3xl mx-auto flex items-center gap-2">
+              <Search className="h-4 w-4 text-[var(--text-secondary)] shrink-0" />
+              <input
+                type="text"
+                autoFocus
+                value={findQuery}
+                onChange={(e) => setFindQuery(e.target.value)}
+                placeholder="Find in this note..."
+                aria-label="Find in this note"
+                className="flex-1 bg-transparent text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] focus:outline-none"
+              />
+              {findQuery.trim() && (
+                <span className="text-xs text-[var(--text-secondary)] tabular-nums shrink-0">
+                  {highlightedResult.count} {highlightedResult.count === 1 ? 'match' : 'matches'}
+                </span>
+              )}
+              <button
+                type="button"
+                onClick={() => {
+                  setFindOpen(false);
+                  setFindQuery('');
+                }}
+                aria-label="Close find"
+                className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)] cursor-pointer"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Note Content */}
         <article className="flex-1 px-5 sm:px-8 pt-7 pb-24 max-w-3xl w-full mx-auto">
           <h1 className="text-2xl sm:text-[30px] font-bold tracking-tight text-[var(--text-primary)] leading-tight text-balance">
@@ -365,10 +477,10 @@ export function NoteDetailsScreen() {
 
           <div
             onClick={handleContentClick}
-            className="note-content note-readonly text-[15.5px] sm:text-base text-[var(--text-primary)]"
+            className="note-content note-readonly text-[var(--text-primary)]"
             dangerouslySetInnerHTML={{
               __html:
-                note.content ||
+                highlightedResult.html ||
                 (extractNoteImages(note.content, legacyImages).length > 0
                   ? ''
                   : '<p style="color:var(--text-secondary);">This note is empty. Tap Edit to start writing.</p>'),
@@ -454,14 +566,28 @@ export function NoteDetailsScreen() {
               </p>
             </div>
 
-            <button
-              type="button"
-              onClick={handleCopyNote}
-              className="flex w-full min-h-[46px] items-center justify-center gap-2 rounded-xl bg-[var(--text-primary)] dark:bg-[var(--accent-primary)] text-sm font-semibold text-[var(--bg-card)] dark:text-[#171717] cursor-pointer"
-            >
-              <Copy className="h-4 w-4" strokeWidth={2} />
-              Copy Plain Text
-            </button>
+            <div className="flex flex-col gap-2.5">
+              <button
+                type="button"
+                onClick={handleCopyNote}
+                className="flex w-full min-h-[46px] items-center justify-center gap-2 rounded-xl bg-[var(--text-primary)] dark:bg-[var(--accent-primary)] text-sm font-semibold text-[var(--bg-card)] dark:text-[#171717] cursor-pointer"
+              >
+                <Copy className="h-4 w-4" strokeWidth={2} />
+                Copy Plain Text
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setShareOpen(false);
+                  window.setTimeout(() => window.print(), 120);
+                }}
+                className="flex w-full min-h-[46px] items-center justify-center gap-2 rounded-xl bg-[var(--bg-subtle)] text-sm font-semibold text-[var(--text-primary)] cursor-pointer"
+              >
+                <Printer className="h-4 w-4" strokeWidth={2} />
+                Print / Save as PDF
+              </button>
+            </div>
           </div>
         </InfoSheetDialog>
 

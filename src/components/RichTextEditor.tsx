@@ -4,20 +4,78 @@ import {
   Camera,
   CheckSquare,
   Heading2,
+  Highlighter,
   ImagePlus,
   Italic,
+  Link2,
   List,
   ListOrdered,
   Lock,
+  Mic,
+  MicOff,
+  Minus,
+  PenTool,
+  Plus,
   Quote,
   Redo2,
+  Strikethrough,
+  Table2,
   Underline,
   Undo2,
   X,
 } from 'lucide-react';
 import { useNotes } from '../context/NotesContext';
 import { FREE_LIMITS } from '../types/notes';
-import { readAndCompressImage } from '../utils/noteHelpers';
+import { readAndCompressImage, stripHtmlToText } from '../utils/noteHelpers';
+import { SketchModal } from './SketchModal';
+
+interface SpeechRecognitionAlternativeLike {
+  transcript: string;
+}
+
+interface SpeechRecognitionResultLike {
+  isFinal: boolean;
+  [index: number]: SpeechRecognitionAlternativeLike;
+}
+
+interface SpeechRecognitionEventLike {
+  resultIndex: number;
+  results: ArrayLike<SpeechRecognitionResultLike>;
+}
+
+interface SpeechRecognitionInstance {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  onresult: ((event: SpeechRecognitionEventLike) => void) | null;
+  onerror: (() => void) | null;
+  onend: (() => void) | null;
+  start: () => void;
+  stop: () => void;
+}
+
+type SpeechRecognitionCtor = new () => SpeechRecognitionInstance;
+
+const QUICK_TEMPLATES = [
+  {
+    id: 'meeting',
+    label: 'Meeting Notes',
+    title: 'Meeting Notes',
+    html: '<p><strong>Date:</strong> </p><p><strong>Agenda:</strong></p><ul><li></li></ul><p><strong>Key Takeaways:</strong></p><ul><li></li></ul>',
+  },
+  {
+    id: 'study',
+    label: 'Study Notes',
+    title: 'Study Notes',
+    html: '<p><strong>Topic:</strong> </p><p><strong>Key Points:</strong></p><ul><li></li></ul><p><strong>Summary:</strong></p><p><br></p>',
+  },
+  {
+    id: 'grocery',
+    label: 'Grocery List',
+    title: 'Shopping List',
+    html: '<table class="note-table"><thead><tr><th>Item</th><th>Qty / Note</th></tr></thead><tbody><tr><td><br></td><td><br></td></tr><tr><td><br></td><td><br></td></tr></tbody></table><p><br></p>',
+  },
+];
 
 interface RichTextEditorProps {
   title: string;
@@ -96,12 +154,14 @@ export function RichTextEditor({
   onChangeImages,
   autoFocusBody = false,
 }: RichTextEditorProps) {
-  const { isPremium, maxImagesAllowed, requestUpgrade } = useNotes();
+  const { isPremium, maxImagesAllowed, requestUpgrade, showToast } = useNotes();
 
   const editorWrapperRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
+  const insertMenuRef = useRef<HTMLDivElement>(null);
+  const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
   const historyRef = useRef<string[]>([content || '']);
   const historyIndexRef = useRef<number>(0);
   const isInternalChangeRef = useRef<boolean>(false);
@@ -118,11 +178,19 @@ export function RichTextEditor({
 
   const [dragGhost, setDragGhost] = useState<DragGhostState | null>(null);
   const [dropIndicatorTop, setDropIndicatorTop] = useState<number | null>(null);
+  const [insertMenuOpen, setInsertMenuOpen] = useState(false);
+  const [sketchOpen, setSketchOpen] = useState(false);
+  const [linkModalOpen, setLinkModalOpen] = useState(false);
+  const [linkUrl, setLinkUrl] = useState('');
+  const [linkText, setLinkText] = useState('');
+  const [isListening, setIsListening] = useState(false);
+  const [speechLang, setSpeechLang] = useState<'bn-BD' | 'en-US'>('bn-BD');
 
   const [activeFormats, setActiveFormats] = useState({
     bold: false,
     italic: false,
     underline: false,
+    strikeThrough: false,
     unorderedList: false,
     orderedList: false,
   });
@@ -174,12 +242,33 @@ export function RichTextEditor({
     return () => document.removeEventListener('selectionchange', handleSelectionChange);
   }, []);
 
+  useEffect(() => {
+    const onOutside = (e: MouseEvent) => {
+      if (insertMenuRef.current && !insertMenuRef.current.contains(e.target as Node)) {
+        setInsertMenuOpen(false);
+      }
+    };
+    if (insertMenuOpen) document.addEventListener('mousedown', onOutside);
+    return () => document.removeEventListener('mousedown', onOutside);
+  }, [insertMenuOpen]);
+
+  useEffect(() => {
+    return () => {
+      try {
+        recognitionRef.current?.stop();
+      } catch {
+        // Ignore cleanup stop errors
+      }
+    };
+  }, []);
+
   const updateToolbarState = useCallback(() => {
     try {
       setActiveFormats({
         bold: document.queryCommandState('bold'),
         italic: document.queryCommandState('italic'),
         underline: document.queryCommandState('underline'),
+        strikeThrough: document.queryCommandState('strikeThrough'),
         unorderedList: document.queryCommandState('insertUnorderedList'),
         orderedList: document.queryCommandState('insertOrderedList'),
       });
@@ -487,6 +576,175 @@ export function RichTextEditor({
     emitChange();
   };
 
+  const handleToggleHighlight = () => {
+    if (!editorRef.current) return;
+    editorRef.current.focus();
+    const currentBg = document.queryCommandValue('hiliteColor');
+    const isHighlighted =
+      currentBg &&
+      currentBg !== 'transparent' &&
+      currentBg !== 'rgba(0, 0, 0, 0)' &&
+      currentBg !== 'rgb(255, 255, 255)';
+    document.execCommand('hiliteColor', false, isHighlighted ? 'transparent' : '#FFF1B8');
+    emitChange();
+  };
+
+  const restoreSavedRange = useCallback(() => {
+    const editor = editorRef.current;
+    if (!editor) return;
+    editor.focus();
+    const sel = window.getSelection();
+    if (!sel) return;
+    if (savedRangeRef.current && editor.contains(savedRangeRef.current.commonAncestorContainer)) {
+      sel.removeAllRanges();
+      sel.addRange(savedRangeRef.current);
+    }
+  }, []);
+
+  const handleInsertDivider = () => {
+    setInsertMenuOpen(false);
+    restoreSavedRange();
+    document.execCommand('insertHTML', false, '<hr /><p><br></p>');
+    emitChange();
+  };
+
+  const handleInsertTable = () => {
+    setInsertMenuOpen(false);
+    restoreSavedRange();
+    const tableHtml =
+      '<table class="note-table"><thead><tr><th>Column 1</th><th>Column 2</th></tr></thead>' +
+      '<tbody><tr><td><br></td><td><br></td></tr><tr><td><br></td><td><br></td></tr></tbody></table><p><br></p>';
+    document.execCommand('insertHTML', false, tableHtml);
+    emitChange();
+  };
+
+  const handleOpenLinkModal = () => {
+    saveSelection();
+    setInsertMenuOpen(false);
+    const sel = window.getSelection();
+    const selectedText = sel && editorRef.current?.contains(sel.anchorNode) ? sel.toString() : '';
+    setLinkText(selectedText);
+    setLinkUrl('');
+    setLinkModalOpen(true);
+  };
+
+  const handleConfirmLink = (e: React.FormEvent) => {
+    e.preventDefault();
+    const rawUrl = linkUrl.trim();
+    if (!rawUrl) return;
+    const normalizedUrl = /^https?:\/\//i.test(rawUrl) ? rawUrl : `https://${rawUrl}`;
+    const displayText = linkText.trim() || rawUrl;
+
+    setLinkModalOpen(false);
+    restoreSavedRange();
+
+    const safeHref = normalizedUrl.replace(/"/g, '&quot;');
+    const safeLabel = displayText
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+    document.execCommand(
+      'insertHTML',
+      false,
+      `<a href="${safeHref}" target="_blank" rel="noopener noreferrer">${safeLabel}</a>&nbsp;`
+    );
+    emitChange();
+  };
+
+  const handleOpenSketch = () => {
+    saveSelection();
+    setInsertMenuOpen(false);
+    const totalCount = getTotalImageCount();
+    if (!isPremium && totalCount >= maxImagesAllowed) {
+      requestUpgrade(
+        `Free plan allows ${FREE_LIMITS.maxImagesPerNote} image or sketch per note. Upgrade to Notes Premium for unlimited media.`
+      );
+      return;
+    }
+    setSketchOpen(true);
+  };
+
+  const handleToggleVoice = (overrideLang?: 'bn-BD' | 'en-US') => {
+    const win = window as unknown as {
+      SpeechRecognition?: SpeechRecognitionCtor;
+      webkitSpeechRecognition?: SpeechRecognitionCtor;
+    };
+    const SpeechRec = win.SpeechRecognition || win.webkitSpeechRecognition;
+
+    if (!SpeechRec) {
+      showToast('Voice typing is not supported in this browser');
+      return;
+    }
+
+    if (isListening && !overrideLang) {
+      try {
+        recognitionRef.current?.stop();
+      } catch {
+        // Ignore stop errors
+      }
+      setIsListening(false);
+      return;
+    }
+
+    if (isListening && overrideLang) {
+      try {
+        recognitionRef.current?.stop();
+      } catch {
+        // Ignore stop errors
+      }
+    }
+
+    const activeLang = overrideLang || speechLang;
+    if (overrideLang) setSpeechLang(overrideLang);
+
+    saveSelection();
+    const recognition = new SpeechRec();
+    recognition.continuous = true;
+    recognition.interimResults = false;
+    recognition.lang = activeLang;
+
+    recognition.onresult = (event) => {
+      let transcript = '';
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        if (event.results[i].isFinal) {
+          transcript += `${event.results[i][0].transcript} `;
+        }
+      }
+      if (transcript.trim() && editorRef.current) {
+        restoreSavedRange();
+        document.execCommand('insertText', false, transcript);
+        saveSelection();
+        emitChange();
+      }
+    };
+
+    recognition.onerror = () => {
+      setIsListening(false);
+      showToast('Could not capture voice input');
+    };
+
+    recognition.onend = () => {
+      setIsListening(false);
+    };
+
+    try {
+      recognitionRef.current = recognition;
+      recognition.start();
+      setIsListening(true);
+      setInsertMenuOpen(false);
+    } catch {
+      setIsListening(false);
+      showToast('Microphone permission unavailable');
+    }
+  };
+
+  const handleApplyTemplate = (tpl: (typeof QUICK_TEMPLATES)[number]) => {
+    if (!editorRef.current) return;
+    onChangeTitle(tpl.title);
+    editorRef.current.innerHTML = tpl.html;
+    emitChange();
+  };
+
   const handlePremiumFormat = (label: string, action: () => void) => {
     if (!isPremium) {
       requestUpgrade(`${label} is part of Advanced Note Formatting in Notes Premium.`);
@@ -716,8 +974,8 @@ export function RichTextEditor({
 
       {/* Formatting & Image Toolbar */}
       <div className="sticky top-[57px] z-20 bg-[var(--bg-canvas)]/95 backdrop-blur-sm border-b border-[var(--divider)] px-4 sm:px-6 py-2">
-        <div className="flex items-center justify-between gap-1 overflow-x-auto no-scrollbar">
-          <div className="flex items-center gap-0.5 sm:gap-1">
+        <div className="flex items-center justify-between gap-1">
+          <div className="flex items-center gap-0.5 sm:gap-1 overflow-x-auto no-scrollbar min-w-0">
             {/* Free Basic Formatting */}
             <button
               type="button"
@@ -762,6 +1020,32 @@ export function RichTextEditor({
               type="button"
               onMouseDown={(e) => {
                 e.preventDefault();
+                handleFormat('strikeThrough');
+              }}
+              aria-label="Strikethrough"
+              title="Strikethrough"
+              className={toolbarBtnClass(activeFormats.strikeThrough)}
+            >
+              <Strikethrough className="h-4 w-4" strokeWidth={2} />
+            </button>
+
+            <button
+              type="button"
+              onMouseDown={(e) => {
+                e.preventDefault();
+                handleToggleHighlight();
+              }}
+              aria-label="Highlight text"
+              title="Highlight"
+              className={toolbarBtnClass(false)}
+            >
+              <Highlighter className="h-4 w-4" strokeWidth={2} />
+            </button>
+
+            <button
+              type="button"
+              onMouseDown={(e) => {
+                e.preventDefault();
                 handleFormat('insertUnorderedList');
               }}
               aria-label="Bullet list"
@@ -771,7 +1055,7 @@ export function RichTextEditor({
               <List className="h-4 w-4" strokeWidth={2} />
             </button>
 
-            <div className="mx-1 h-4 w-px bg-[var(--divider)]" />
+            <div className="mx-1 h-4 w-px bg-[var(--divider)] shrink-0" />
 
             {/* Premium Advanced Formatting */}
             <button
@@ -838,7 +1122,7 @@ export function RichTextEditor({
               )}
             </button>
 
-            <div className="mx-1 h-4 w-px bg-[var(--divider)]" />
+            <div className="mx-1 h-4 w-px bg-[var(--divider)] shrink-0" />
 
             <button
               type="button"
@@ -863,9 +1147,96 @@ export function RichTextEditor({
             >
               <Camera className="h-4 w-4" strokeWidth={2} />
             </button>
+
+            <button
+              type="button"
+              onMouseDown={() => saveSelection()}
+              onTouchStart={() => saveSelection()}
+              onClick={() => handleToggleVoice()}
+              aria-label={isListening ? 'Stop voice typing' : 'Voice typing'}
+              title={isListening ? 'Stop listening' : `Voice typing (${speechLang === 'bn-BD' ? 'বাংলা' : 'EN'})`}
+              className={toolbarBtnClass(isListening)}
+            >
+              {isListening ? (
+                <MicOff className="h-4 w-4 text-[#E45B5B]" strokeWidth={2} />
+              ) : (
+                <Mic className="h-4 w-4" strokeWidth={2} />
+              )}
+            </button>
           </div>
 
           <div className="flex items-center gap-0.5 sm:gap-1 shrink-0">
+            {/* + Insert Extra Tools Menu */}
+            <div className="relative" ref={insertMenuRef}>
+              <button
+                type="button"
+                onMouseDown={() => saveSelection()}
+                onTouchStart={() => saveSelection()}
+                onClick={() => setInsertMenuOpen((v) => !v)}
+                aria-label="Insert more tools"
+                title="Insert table, link, divider, sketch"
+                className={toolbarBtnClass(insertMenuOpen)}
+              >
+                <Plus className="h-4 w-4" strokeWidth={2.2} />
+              </button>
+
+              {insertMenuOpen && (
+                <div className="absolute right-0 mt-1.5 w-52 rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] py-1.5 z-40">
+                  <button
+                    type="button"
+                    onClick={handleInsertTable}
+                    className="flex w-full min-h-[40px] items-center gap-2.5 px-3.5 text-sm text-[var(--text-primary)] hover:bg-[var(--bg-subtle)] cursor-pointer"
+                  >
+                    <Table2 className="h-4 w-4 text-[var(--text-secondary)]" strokeWidth={1.85} />
+                    Simple Table
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleOpenLinkModal}
+                    className="flex w-full min-h-[40px] items-center gap-2.5 px-3.5 text-sm text-[var(--text-primary)] hover:bg-[var(--bg-subtle)] cursor-pointer"
+                  >
+                    <Link2 className="h-4 w-4 text-[var(--text-secondary)]" strokeWidth={1.85} />
+                    Insert Link
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleInsertDivider}
+                    className="flex w-full min-h-[40px] items-center gap-2.5 px-3.5 text-sm text-[var(--text-primary)] hover:bg-[var(--bg-subtle)] cursor-pointer"
+                  >
+                    <Minus className="h-4 w-4 text-[var(--text-secondary)]" strokeWidth={1.85} />
+                    Divider Line
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleOpenSketch}
+                    className="flex w-full min-h-[40px] items-center gap-2.5 px-3.5 text-sm text-[var(--text-primary)] hover:bg-[var(--bg-subtle)] cursor-pointer"
+                  >
+                    <PenTool className="h-4 w-4 text-[var(--text-secondary)]" strokeWidth={1.85} />
+                    Quick Sketch
+                  </button>
+
+                  <div className="my-1 h-px bg-[var(--divider)]" />
+
+                  <button
+                    type="button"
+                    onClick={() => handleToggleVoice(speechLang === 'bn-BD' ? 'en-US' : 'bn-BD')}
+                    className="flex w-full min-h-[40px] items-center justify-between px-3.5 text-sm text-[var(--text-primary)] hover:bg-[var(--bg-subtle)] cursor-pointer"
+                  >
+                    <span className="flex items-center gap-2.5">
+                      <Mic className="h-4 w-4 text-[var(--text-secondary)]" strokeWidth={1.85} />
+                      Voice Language
+                    </span>
+                    <span className="text-xs font-semibold text-[var(--accent-primary)]">
+                      {speechLang === 'bn-BD' ? 'বাংলা' : 'EN'}
+                    </span>
+                  </button>
+                </div>
+              )}
+            </div>
+
             <button
               type="button"
               onMouseDown={(e) => {
@@ -895,6 +1266,21 @@ export function RichTextEditor({
             </button>
           </div>
         </div>
+
+        {isListening && (
+          <div className="mt-2 flex items-center justify-between rounded-xl bg-[var(--accent-soft)] px-3 py-1.5 text-xs">
+            <span className="font-medium text-[var(--text-primary)]">
+              Listening ({speechLang === 'bn-BD' ? 'বাংলা' : 'English'})… Speak now
+            </span>
+            <button
+              type="button"
+              onClick={() => handleToggleVoice()}
+              className="font-semibold text-[#E45B5B] cursor-pointer"
+            >
+              Stop
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Distraction-free writing & inline media area */}
@@ -947,9 +1333,28 @@ export function RichTextEditor({
             onClick={handleEditorClick}
             onPaste={handlePaste}
             aria-label="Note content"
-            className="note-content min-h-[260px] text-[15.5px] sm:text-base text-[var(--text-primary)] focus:outline-none"
+            className="note-content min-h-[260px] text-[var(--text-primary)] focus:outline-none"
           />
         </div>
+
+        {/* Optional Quick Templates (only visible when note is completely empty) */}
+        {!title.trim() &&
+          !stripHtmlToText(content) &&
+          !content.includes('note-image-block') &&
+          !content.includes('note-table') && (
+            <div className="mt-6 flex flex-wrap items-center gap-2">
+              {QUICK_TEMPLATES.map((tpl) => (
+                <button
+                  key={tpl.id}
+                  type="button"
+                  onClick={() => handleApplyTemplate(tpl)}
+                  className="min-h-[34px] rounded-xl bg-[var(--bg-card)] border border-[var(--divider)] px-3 text-xs font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent-primary)]/60 transition-colors cursor-pointer"
+                >
+                  + {tpl.label}
+                </button>
+              ))}
+            </div>
+          )}
 
         {/* Legacy bottom attachments fallback (if any older note has note.images) */}
         {images.length > 0 && (
@@ -997,6 +1402,64 @@ export function RichTextEditor({
           />
         </div>
       )}
+
+      {/* Insert Link Modal */}
+      {linkModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 px-4"
+          role="dialog"
+          aria-modal="true"
+          onClick={() => setLinkModalOpen(false)}
+        >
+          <form
+            onSubmit={handleConfirmLink}
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-sm rounded-3xl bg-[var(--bg-card)] border border-[var(--divider)] p-6 space-y-3"
+          >
+            <h3 className="text-lg font-bold text-[var(--text-primary)]">Insert Link</h3>
+            <input
+              type="text"
+              autoFocus
+              value={linkUrl}
+              onChange={(e) => setLinkUrl(e.target.value)}
+              placeholder="Paste URL (https://...)"
+              aria-label="Link URL"
+              className="w-full min-h-[44px] rounded-xl bg-[var(--bg-canvas)] border border-[var(--divider)] px-3.5 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-primary)]"
+            />
+            <input
+              type="text"
+              value={linkText}
+              onChange={(e) => setLinkText(e.target.value)}
+              placeholder="Display text (optional)"
+              aria-label="Link text"
+              className="w-full min-h-[44px] rounded-xl bg-[var(--bg-canvas)] border border-[var(--divider)] px-3.5 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-primary)]"
+            />
+            <div className="pt-2 flex gap-2.5">
+              <button
+                type="button"
+                onClick={() => setLinkModalOpen(false)}
+                className="flex-1 min-h-[44px] rounded-full bg-[var(--bg-subtle)] text-sm font-semibold text-[var(--text-primary)] cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={!linkUrl.trim()}
+                className="flex-1 min-h-[44px] rounded-full bg-[var(--text-primary)] dark:bg-[var(--accent-primary)] text-sm font-semibold text-[var(--bg-card)] dark:text-[#171717] disabled:opacity-40 cursor-pointer"
+              >
+                Insert
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* Quick Sketch Modal */}
+      <SketchModal
+        open={sketchOpen}
+        onInsert={(dataUrl) => insertImageBlocksAtSavedRange([dataUrl])}
+        onClose={() => setSketchOpen(false)}
+      />
     </div>
   );
 }

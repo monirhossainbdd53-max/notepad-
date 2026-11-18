@@ -9,6 +9,7 @@ import {
   FREE_LIMITS,
   Folder,
   Note,
+  NoteFontSize,
   NotificationSettings,
   ScreenName,
   ThemePalette,
@@ -25,6 +26,7 @@ interface PersistedState {
   folders: Folder[];
   theme: ThemePreference;
   palette: ThemePalette;
+  noteFontSize: NoteFontSize;
   isPremium: boolean;
   notePin: string | null;
   defaultFolderId: string;
@@ -60,6 +62,8 @@ interface NotesContextValue {
   setTheme: (theme: ThemePreference) => void;
   palette: ThemePalette;
   setPalette: (palette: ThemePalette) => void;
+  noteFontSize: NoteFontSize;
+  setNoteFontSize: (size: NoteFontSize) => void;
   isPremium: boolean;
   setIsPremium: (value: boolean) => void;
   canCreateNote: boolean;
@@ -113,6 +117,7 @@ const defaultPersistedState: PersistedState = {
   folders: DEFAULT_FOLDERS,
   theme: 'light',
   palette: 'default',
+  noteFontSize: 'medium',
   isPremium: false,
   notePin: null,
   defaultFolderId: '',
@@ -136,6 +141,12 @@ function loadInitialState(): PersistedState {
       folders: Array.isArray(parsed.folders) ? parsed.folders : defaultPersistedState.folders,
       theme: parsed.theme || 'light',
       palette: parsed.palette || 'default',
+      noteFontSize:
+        parsed.noteFontSize === 'small' ||
+        parsed.noteFontSize === 'medium' ||
+        parsed.noteFontSize === 'large'
+          ? parsed.noteFontSize
+          : 'medium',
       isPremium: Boolean(parsed.isPremium),
       notePin: typeof parsed.notePin === 'string' ? parsed.notePin : null,
       defaultFolderId: typeof parsed.defaultFolderId === 'string' ? parsed.defaultFolderId : '',
@@ -172,6 +183,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   const [folders, setFolders] = useState<Folder[]>(initial.folders);
   const [theme, setThemeState] = useState<ThemePreference>(initial.theme);
   const [palette, setPaletteState] = useState<ThemePalette>(initial.palette);
+  const [noteFontSize, setNoteFontSizeState] = useState<NoteFontSize>(initial.noteFontSize);
   const [isPremium, setIsPremiumState] = useState<boolean>(initial.isPremium);
   const [notePin, setNotePinState] = useState<string | null>(initial.notePin);
   const [unlockedNoteIds, setUnlockedNoteIds] = useState<string[]>([]);
@@ -209,6 +221,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         folders,
         theme,
         palette,
+        noteFontSize,
         isPremium,
         notePin,
         defaultFolderId,
@@ -226,6 +239,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     folders,
     theme,
     palette,
+    noteFontSize,
     isPremium,
     notePin,
     defaultFolderId,
@@ -265,6 +279,10 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       root.setAttribute('data-palette', activePalette);
     }
   }, [isPremium, palette]);
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-note-size', noteFontSize);
+  }, [noteFontSize]);
 
   useEffect(() => {
     if (!toast) return;
@@ -359,6 +377,10 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
 
   const setTheme = useCallback((nextTheme: ThemePreference) => {
     setThemeState(nextTheme);
+  }, []);
+
+  const setNoteFontSize = useCallback((size: NoteFontSize) => {
+    setNoteFontSizeState(size);
   }, []);
 
   const setPalette = useCallback(
@@ -776,6 +798,8 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     setTheme,
     palette,
     setPalette,
+    noteFontSize,
+    setNoteFontSize,
     isPremium,
     setIsPremium,
     canCreateNote,

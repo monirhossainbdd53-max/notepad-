@@ -2,10 +2,19 @@ import React from 'react';
 import { Check, ChevronLeft, Lock, Monitor, Moon, Sun } from 'lucide-react';
 import { NavigationShell } from '../components/NavigationShell';
 import { useNotes } from '../context/NotesContext';
-import { ThemePalette, ThemePreference } from '../types/notes';
+import { NoteFontSize, ThemePalette, ThemePreference } from '../types/notes';
 
 export function AppearanceScreen() {
-  const { theme, setTheme, palette, setPalette, isPremium, goBack } = useNotes();
+  const {
+    theme,
+    setTheme,
+    palette,
+    setPalette,
+    noteFontSize,
+    setNoteFontSize,
+    isPremium,
+    goBack,
+  } = useNotes();
 
   const modeOptions: {
     id: ThemePreference;
@@ -202,13 +211,48 @@ export function AppearanceScreen() {
           </div>
         </div>
 
+        {/* Note Text Size */}
+        <div>
+          <h2 className="px-1 mb-2 text-xs font-semibold text-[var(--text-secondary)]">
+            Note Text Size
+          </h2>
+          <div className="grid grid-cols-3 gap-2 rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] p-1.5">
+            {(
+              [
+                { id: 'small', label: 'Small', sample: 'text-xs' },
+                { id: 'medium', label: 'Medium', sample: 'text-sm' },
+                { id: 'large', label: 'Large', sample: 'text-base' },
+              ] as { id: NoteFontSize; label: string; sample: string }[]
+            ).map((opt) => {
+              const selected = noteFontSize === opt.id;
+              return (
+                <button
+                  key={opt.id}
+                  type="button"
+                  onClick={() => setNoteFontSize(opt.id)}
+                  className={`min-h-[46px] rounded-xl px-3 py-2 text-center transition-colors cursor-pointer ${
+                    selected
+                      ? 'bg-[var(--accent-soft)] text-[var(--accent-primary)] font-semibold'
+                      : 'text-[var(--text-primary)] hover:bg-[var(--bg-subtle)]/60 font-medium'
+                  }`}
+                >
+                  <span className={`block ${opt.sample}`}>{opt.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
         {/* Live Theme Preview Card */}
         <div className="rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] p-5">
           <p className="text-xs font-medium text-[var(--text-secondary)]">Preview</p>
           <h2 className="mt-2 text-base font-semibold text-[var(--text-primary)]">
             Morning reading notes
           </h2>
-          <p className="mt-1 text-sm text-[var(--text-secondary)]">
+          <p
+            className="mt-1 text-[var(--text-secondary)]"
+            style={{ fontSize: 'var(--note-font-size)' }}
+          >
             Warm surfaces and high-contrast typography adapt seamlessly across every screen.
           </p>
         </div>
