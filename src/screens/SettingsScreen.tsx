@@ -6,7 +6,6 @@ import {
   Crown,
   Download,
   FileText,
-  Folder,
   HelpCircle,
   Info,
   Lock,
@@ -15,7 +14,7 @@ import {
   Shield,
   User,
 } from 'lucide-react';
-import { FolderPickerDialog, InfoSheetDialog } from '../components/ConfirmDialog';
+import { InfoSheetDialog } from '../components/ConfirmDialog';
 import { NavigationShell } from '../components/NavigationShell';
 import { PinDialog } from '../components/PinDialog';
 import { useNotes } from '../context/NotesContext';
@@ -29,9 +28,6 @@ export function SettingsScreen() {
     notePin,
     setNotePin,
     requestUpgrade,
-    defaultFolderId,
-    setDefaultFolderId,
-    getFolderById,
     folders,
     notes,
     notifications,
@@ -40,7 +36,6 @@ export function SettingsScreen() {
     showToast,
   } = useNotes();
 
-  const [defaultFolderOpen, setDefaultFolderOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
   const [backupOpen, setBackupOpen] = useState(false);
   const [restoreOpen, setRestoreOpen] = useState(false);
@@ -48,7 +43,6 @@ export function SettingsScreen() {
   const [pinSheetOpen, setPinSheetOpen] = useState(false);
   const [legalDoc, setLegalDoc] = useState<'privacy' | 'terms' | null>(null);
 
-  const defaultFolder = getFolderById(defaultFolderId) || folders[0];
   const themeLabel =
     theme === 'system' ? 'System' : theme === 'dark' ? 'Dark' : 'Light';
   const paletteSuffix =
@@ -151,21 +145,6 @@ export function SettingsScreen() {
                   {themeLabel}
                   {paletteSuffix}
                 </span>
-                <ChevronRight className="h-4 w-4" strokeWidth={1.75} />
-              </span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setDefaultFolderOpen(true)}
-              className="flex w-full min-h-[54px] items-center justify-between px-4 text-left hover:bg-[var(--bg-subtle)]/50 transition-colors cursor-pointer"
-            >
-              <span className="flex items-center gap-3 text-sm font-medium">
-                <Folder className="h-4 w-4 text-[var(--text-secondary)]" strokeWidth={1.85} />
-                Default Folder
-              </span>
-              <span className="flex items-center gap-1.5 text-xs text-[var(--text-secondary)]">
-                <span>{defaultFolder?.name || 'None'}</span>
                 <ChevronRight className="h-4 w-4" strokeWidth={1.75} />
               </span>
             </button>
@@ -313,15 +292,6 @@ export function SettingsScreen() {
           </div>
         </div>
       </section>
-
-      <FolderPickerDialog
-        open={defaultFolderOpen}
-        title="Default Folder"
-        folders={folders}
-        selectedFolderId={defaultFolderId}
-        onSelect={setDefaultFolderId}
-        onClose={() => setDefaultFolderOpen(false)}
-      />
 
       <InfoSheetDialog
         open={pinSheetOpen}

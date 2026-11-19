@@ -1,4 +1,6 @@
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { App as CapApp } from '@capacitor/app';
+import { Capacitor } from '@capacitor/core';
 import {
   DEFAULT_FOLDERS,
   INITIAL_ACCOUNT,
@@ -47,6 +49,7 @@ interface NotesContextValue {
   navigate: (next: ScreenName, options?: NavigateOptions) => void;
   goBack: () => void;
   canGoBack: boolean;
+  registerBackHandler: (handler: () => boolean) => () => void;
   activeNoteId: string | null;
   activeFolderId: string | null;
   setActiveFolderId: (id: string | null) => void;
@@ -209,6 +212,13 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
 
   const [toast, setToast] = useState<ToastMessage | null>(null);
 
+  const historyRef = useRef<HistoryEntry[]>(history);
+  historyRef.current = history;
+  const backHandlersRef = useRef<Array<{ id: number; fn: () => boolean }>>([]);
+  const backHandlerSeqRef = useRef(0);
+  const ignoreNextPopRef = useRef(false);
+  const lastExitPressRef = useRef(0);
+
   const currentEntry = history[history.length - 1];
   const screen = currentEntry.screen;
   const activeNoteId = currentEntry.noteId;
@@ -323,38 +333,50 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   const canCreateFolder = isPremium || folders.length < FREE_LIMITS.maxFolders;
   const maxImagesAllowed = isPremium ? Number.POSITIVE_INFINITY : FREE_LIMITS.maxImagesPerNote;
 
+  const registerBackHandler = useCallback((fn: () => boolean) => {
+    const id = ++backHandlerSeqRef.current;
+    backHandlersRef.current.push({ id, fn });
+    return () => {
+      backHandlersRef.current = backHandlersRef.current.filter((item) => item.id !== id);
+    };
+  }, []);
+
   const navigate = useCallback((next: ScreenName, options?: NavigateOptions) => {
-    setHistory((prev) => {
-      const current = prev[prev.length - 1];
-      const nextEntry: HistoryEntry = {
-        screen: next,
-        noteId: options?.noteId !== undefined ? options.noteId : current.noteId,
-        folderId: options?.folderId !== undefined ? options.folderId : current.folderId,
-      };
+    const prev = historyRef.current;
+    const current = prev[prev.length - 1];
+    const nextEntry: HistoryEntry = {
+      screen: next,
+      noteId: options?.noteId !== undefined ? options.noteId : current.noteId,
+      folderId: options?.folderId !== undefined ? options.folderId : current.folderId,
+    };
 
-      const topTabs: ScreenName[] = ['home', 'folders', 'favorites', 'settings'];
-      if (topTabs.includes(next) && !options?.replace) {
-        return [{ screen: next, noteId: null, folderId: null }];
+    const topTabs: ScreenName[] = ['home', 'folders', 'favorites', 'settings'];
+    if (topTabs.includes(next) && !options?.replace) {
+      if (typeof window !== 'undefined') {
+        window.history.replaceState({ notesDepth: 0 }, '');
       }
-
-      if (options?.replace) {
-        return [...prev.slice(0, -1), nextEntry];
+      setHistory([{ screen: next, noteId: null, folderId: null }]);
+    } else if (options?.replace) {
+      setHistory((curr) => [...curr.slice(0, -1), nextEntry]);
+    } else if (
+      current.screen !== nextEntry.screen ||
+      current.noteId !== nextEntry.noteId ||
+      current.folderId !== nextEntry.folderId
+    ) {
+      if (typeof window !== 'undefined') {
+        window.history.pushState({ notesDepth: prev.length }, '');
       }
-
-      if (
-        current.screen === nextEntry.screen &&
-        current.noteId === nextEntry.noteId &&
-        current.folderId === nextEntry.folderId
-      ) {
-        return prev;
-      }
-
-      return [...prev, nextEntry];
-    });
+      setHistory((curr) => [...curr, nextEntry]);
+    }
     window.scrollTo({ top: 0, behavior: 'instant' as ScrollBehavior });
   }, []);
 
   const goBack = useCallback(() => {
+    const prevLen = historyRef.current.length;
+    if (prevLen > 1 && typeof window !== 'undefined' && (window.history.state?.notesDepth ?? 0) > 0) {
+      ignoreNextPopRef.current = true;
+      window.history.back();
+    }
     setHistory((prev) => {
       if (prev.length <= 1) {
         return [{ screen: 'home', noteId: null, folderId: null }];
@@ -362,6 +384,86 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       return prev.slice(0, -1);
     });
   }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (!window.history.state || typeof window.history.state.notesDepth !== 'number') {
+      window.history.replaceState({ notesDepth: 0 }, '');
+    }
+
+    const handlePopState = () => {
+      if (ignoreNextPopRef.current) {
+        ignoreNextPopRef.current = false;
+        return;
+      }
+
+      const handlers = backHandlersRef.current;
+      for (let i = handlers.length - 1; i >= 0; i--) {
+        if (handlers[i].fn()) {
+          window.history.pushState({ notesDepth: historyRef.current.length - 1 }, '');
+          return;
+        }
+      }
+
+      const currentHist = historyRef.current;
+      if (currentHist.length > 1) {
+        setHistory((prev) => (prev.length > 1 ? prev.slice(0, -1) : prev));
+        return;
+      }
+
+      const activeScreen = currentHist[0]?.screen;
+      if (activeScreen && activeScreen !== 'home' && activeScreen !== 'splash') {
+        setHistory([{ screen: 'home', noteId: null, folderId: null }]);
+        window.history.pushState({ notesDepth: 0 }, '');
+      }
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  useEffect(() => {
+    let isNative = false;
+    try {
+      isNative = Capacitor.isNativePlatform();
+    } catch {
+      isNative = false;
+    }
+    if (!isNative) return;
+
+    const listenerPromise = CapApp.addListener('backButton', () => {
+      const handlers = backHandlersRef.current;
+      for (let i = handlers.length - 1; i >= 0; i--) {
+        if (handlers[i].fn()) {
+          return;
+        }
+      }
+
+      const currentHist = historyRef.current;
+      if (currentHist.length > 1) {
+        goBack();
+        return;
+      }
+
+      const activeScreen = currentHist[0]?.screen;
+      if (activeScreen && activeScreen !== 'home' && activeScreen !== 'splash') {
+        setHistory([{ screen: 'home', noteId: null, folderId: null }]);
+        return;
+      }
+
+      const now = Date.now();
+      if (now - lastExitPressRef.current < 2000) {
+        CapApp.exitApp();
+      } else {
+        lastExitPressRef.current = now;
+        showToast('Press back again to exit');
+      }
+    });
+
+    return () => {
+      listenerPromise.then((handle) => handle.remove()).catch(() => {});
+    };
+  }, [goBack, showToast]);
 
   const setActiveFolderId = useCallback((id: string | null) => {
     setHistory((prev) => {
@@ -783,6 +885,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     navigate,
     goBack,
     canGoBack: history.length > 1,
+    registerBackHandler,
     activeNoteId,
     activeFolderId,
     setActiveFolderId,
@@ -855,4 +958,18 @@ export function useNotes() {
   const ctx = useContext(NotesContext);
   if (!ctx) throw new Error('useNotes must be used within NotesProvider');
   return ctx;
+}
+
+export function useBackHandler(active: boolean, onBack: () => void) {
+  const { registerBackHandler } = useNotes();
+  const onBackRef = useRef(onBack);
+  onBackRef.current = onBack;
+
+  useEffect(() => {
+    if (!active) return;
+    return registerBackHandler(() => {
+      onBackRef.current();
+      return true;
+    });
+  }, [active, registerBackHandler]);
 }

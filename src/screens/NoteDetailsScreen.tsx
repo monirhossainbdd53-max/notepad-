@@ -19,7 +19,7 @@ import {
 import { ConfirmDialog, FolderPickerDialog, InfoSheetDialog } from '../components/ConfirmDialog';
 import { NavigationShell } from '../components/NavigationShell';
 import { PinDialog } from '../components/PinDialog';
-import { useNotes } from '../context/NotesContext';
+import { useBackHandler, useNotes } from '../context/NotesContext';
 import {
   countWords,
   extractNoteImages,
@@ -119,6 +119,13 @@ export function NoteDetailsScreen() {
   const [findOpen, setFindOpen] = useState(false);
   const [findQuery, setFindQuery] = useState('');
   const menuRef = useRef<HTMLDivElement>(null);
+
+  useBackHandler(menuOpen, () => setMenuOpen(false));
+  useBackHandler(findOpen, () => {
+    setFindOpen(false);
+    setFindQuery('');
+  });
+  useBackHandler(Boolean(lightboxSrc), () => setLightboxSrc(null));
 
   const highlightedResult = useMemo(() => {
     if (!note || !findOpen || !findQuery.trim()) {

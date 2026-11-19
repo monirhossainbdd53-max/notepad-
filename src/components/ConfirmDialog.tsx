@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Check, Folder as FolderIcon, Trash2, X } from 'lucide-react';
+import { useBackHandler } from '../context/NotesContext';
 import { Folder } from '../types/notes';
 
 interface ConfirmDialogProps {
@@ -23,6 +24,7 @@ export function ConfirmDialog({
   onConfirm,
   onClose,
 }: ConfirmDialogProps) {
+  useBackHandler(open, onClose);
   if (!open) return null;
 
   return (
@@ -103,6 +105,7 @@ export function FolderNameDialog({
     if (open) setName(initialValue);
   }, [open, initialValue]);
 
+  useBackHandler(open, onClose);
   if (!open) return null;
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -185,6 +188,7 @@ export function FolderPickerDialog({
   onSelect,
   onClose,
 }: FolderPickerDialogProps) {
+  useBackHandler(open, onClose);
   if (!open) return null;
 
   return (
@@ -259,6 +263,7 @@ interface InfoSheetDialogProps {
 }
 
 export function InfoSheetDialog({ open, title, children, onClose }: InfoSheetDialogProps) {
+  useBackHandler(open, onClose);
   if (!open) return null;
 
   return (

@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Bold,
   Camera,
+  Check,
   CheckSquare,
   Heading2,
   Highlighter,
@@ -24,7 +25,7 @@ import {
   Undo2,
   X,
 } from 'lucide-react';
-import { useNotes } from '../context/NotesContext';
+import { useBackHandler, useNotes } from '../context/NotesContext';
 import { FREE_LIMITS } from '../types/notes';
 import { readAndCompressImage, stripHtmlToText } from '../utils/noteHelpers';
 import { SketchModal } from './SketchModal';
@@ -185,6 +186,14 @@ export function RichTextEditor({
   const [linkText, setLinkText] = useState('');
   const [isListening, setIsListening] = useState(false);
   const [speechLang, setSpeechLang] = useState<'bn-BD' | 'en-US'>('bn-BD');
+  const [sizeSliderOpen, setSizeSliderOpen] = useState(false);
+  const [activeFontSize, setActiveFontSize] = useState(18);
+  const activeSizeGroupRef = useRef<string | null>(null);
+  const sliderTrackRef = useRef<HTMLDivElement>(null);
+  const isSlidingRef = useRef(false);
+
+  const MIN_TEXT_SIZE = 10;
+  const MAX_TEXT_SIZE = 42;
 
   const [activeFormats, setActiveFormats] = useState({
     bold: false,
@@ -765,15 +774,147 @@ export function RichTextEditor({
     emitChange();
   };
 
-  const handleToggleHeading = () => {
-    if (!editorRef.current) return;
-    editorRef.current.focus();
-    const currentBlock = document.queryCommandValue('formatBlock');
-    if (currentBlock && currentBlock.toLowerCase() === 'h2') {
-      document.execCommand('formatBlock', false, 'p');
-    } else {
-      document.execCommand('formatBlock', false, 'h2');
+  const closeSizeSlider = useCallback(() => {
+    setSizeSliderOpen(false);
+    activeSizeGroupRef.current = null;
+  }, []);
+
+  useBackHandler(sizeSliderOpen, closeSizeSlider);
+  useBackHandler(linkModalOpen, () => setLinkModalOpen(false));
+
+  const applyFontSizeToActiveGroup = useCallback((nextSize: number, commitHistory: boolean) => {
+    const editor = editorRef.current;
+    const groupId = activeSizeGroupRef.current;
+    if (!editor || !groupId) return;
+
+    const clamped = Math.max(MIN_TEXT_SIZE, Math.min(MAX_TEXT_SIZE, Math.round(nextSize)));
+    setActiveFontSize(clamped);
+
+    const targets = editor.querySelectorAll<HTMLElement>(`[data-size-group="${groupId}"]`);
+    targets.forEach((el) => {
+      el.style.fontSize = `${clamped}px`;
+      el.style.lineHeight = '1.35';
+    });
+
+    if (commitHistory) {
+      emitChange();
     }
+  }, [emitChange]);
+
+  const updateSliderFromClientX = useCallback(
+    (clientX: number, commitHistory: boolean) => {
+      const track = sliderTrackRef.current;
+      if (!track) return;
+      const rect = track.getBoundingClientRect();
+      if (rect.width <= 0) return;
+      const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+      const nextSize = Math.round(MIN_TEXT_SIZE + ratio * (MAX_TEXT_SIZE - MIN_TEXT_SIZE));
+      applyFontSizeToActiveGroup(nextSize, commitHistory);
+    },
+    [applyFontSizeToActiveGroup]
+  );
+
+  const handleOpenTextSizeSlider = () => {
+    const editor = editorRef.current;
+    if (!editor) return;
+
+    const sel = window.getSelection();
+    let range: Range | null = null;
+    if (sel && sel.rangeCount > 0 && editor.contains(sel.getRangeAt(0).commonAncestorContainer)) {
+      range = sel.getRangeAt(0);
+    } else if (
+      savedRangeRef.current &&
+      editor.contains(savedRangeRef.current.commonAncestorContainer)
+    ) {
+      range = savedRangeRef.current;
+    }
+
+    if (!range || range.collapsed || !range.toString().trim()) {
+      if (sizeSliderOpen) {
+        closeSizeSlider();
+      } else {
+        showToast('Select text first to resize');
+      }
+      return;
+    }
+
+    // Measure current computed font-size at selection start
+    let startEl: HTMLElement | null =
+      range.startContainer.nodeType === Node.ELEMENT_NODE
+        ? (range.startContainer as HTMLElement)
+        : range.startContainer.parentElement;
+    if (!startEl || !editor.contains(startEl)) {
+      startEl = editor;
+    }
+    const existingSpan = startEl.closest('.note-sized-text') as HTMLElement | null;
+    const rawSize = parseFloat(
+      existingSpan?.style.fontSize || window.getComputedStyle(startEl).fontSize || '16'
+    );
+    const initialSize = Math.max(MIN_TEXT_SIZE, Math.min(MAX_TEXT_SIZE, Math.round(rawSize || 16)));
+
+    editor.focus();
+    if (sel) {
+      sel.removeAllRanges();
+      sel.addRange(range);
+    }
+
+    const groupId = `fs_${Date.now()}`;
+    document.execCommand('fontSize', false, '7');
+
+    const createdFonts = Array.from(editor.querySelectorAll('font[size="7"]'));
+    if (createdFonts.length === 0) {
+      showToast('Select text first to resize');
+      return;
+    }
+
+    const wrappedSpans: HTMLSpanElement[] = [];
+    createdFonts.forEach((fontEl) => {
+      const span = document.createElement('span');
+      span.className = 'note-sized-text';
+      span.setAttribute('data-size-group', groupId);
+      span.style.fontSize = `${initialSize}px`;
+      span.style.lineHeight = '1.35';
+      while (fontEl.firstChild) {
+        span.appendChild(fontEl.firstChild);
+      }
+
+      // Unwrap any nested sized spans inside the new selection wrapper
+      span.querySelectorAll('.note-sized-text').forEach((nested) => {
+        const parent = nested.parentNode;
+        if (!parent) return;
+        while (nested.firstChild) {
+          parent.insertBefore(nested.firstChild, nested);
+        }
+        parent.removeChild(nested);
+      });
+
+      fontEl.parentNode?.replaceChild(span, fontEl);
+
+      // If parent is an old .note-sized-text containing only this new span, replace the parent cleanly
+      const parentEl = span.parentElement;
+      if (
+        parentEl &&
+        parentEl.classList.contains('note-sized-text') &&
+        parentEl.childNodes.length === 1
+      ) {
+        parentEl.parentNode?.replaceChild(span, parentEl);
+      }
+
+      wrappedSpans.push(span);
+    });
+
+    if (sel && wrappedSpans.length > 0) {
+      const nextRange = document.createRange();
+      nextRange.setStartBefore(wrappedSpans[0]);
+      nextRange.setEndAfter(wrappedSpans[wrappedSpans.length - 1]);
+      sel.removeAllRanges();
+      sel.addRange(nextRange);
+      savedRangeRef.current = nextRange.cloneRange();
+    }
+
+    activeSizeGroupRef.current = groupId;
+    setActiveFontSize(initialSize);
+    setSizeSliderOpen(true);
     emitChange();
   };
 
@@ -1057,21 +1198,17 @@ export function RichTextEditor({
 
             <div className="mx-1 h-4 w-px bg-[var(--divider)] shrink-0" />
 
-            {/* Premium Advanced Formatting */}
             <button
               type="button"
-              onMouseDown={(e) => {
+              onPointerDown={(e) => {
                 e.preventDefault();
-                handlePremiumFormat('Heading formatting', handleToggleHeading);
+                handleOpenTextSizeSlider();
               }}
-              aria-label="Heading"
-              title={isPremium ? 'Heading' : 'Heading (Premium)'}
-              className={toolbarBtnClass(false)}
+              aria-label="Resize selected text"
+              title="Resize selected text"
+              className={toolbarBtnClass(sizeSliderOpen)}
             >
               <Heading2 className="h-4 w-4" strokeWidth={2} />
-              {!isPremium && (
-                <Lock className="h-2.5 w-2.5 absolute bottom-1 right-1 text-[var(--accent-primary)]" />
-              )}
             </button>
 
             <button
@@ -1266,6 +1403,76 @@ export function RichTextEditor({
             </button>
           </div>
         </div>
+
+        {sizeSliderOpen && (
+          <div className="mt-2 flex items-center gap-3 rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] px-3.5 py-2">
+            <span className="text-[11px] font-semibold text-[var(--text-secondary)] shrink-0">
+              Size
+            </span>
+
+            <div
+              ref={sliderTrackRef}
+              role="slider"
+              aria-label="Selected text font size"
+              aria-valuemin={MIN_TEXT_SIZE}
+              aria-valuemax={MAX_TEXT_SIZE}
+              aria-valuenow={activeFontSize}
+              tabIndex={0}
+              onPointerDown={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                isSlidingRef.current = true;
+                e.currentTarget.setPointerCapture(e.pointerId);
+                updateSliderFromClientX(e.clientX, false);
+              }}
+              onPointerMove={(e) => {
+                if (!isSlidingRef.current) return;
+                e.preventDefault();
+                updateSliderFromClientX(e.clientX, false);
+              }}
+              onPointerUp={(e) => {
+                if (!isSlidingRef.current) return;
+                isSlidingRef.current = false;
+                updateSliderFromClientX(e.clientX, true);
+              }}
+              onPointerCancel={() => {
+                if (!isSlidingRef.current) return;
+                isSlidingRef.current = false;
+                emitChange();
+              }}
+              className="relative flex-1 h-8 flex items-center touch-none cursor-pointer select-none"
+            >
+              <div className="w-full h-1.5 rounded-full bg-[var(--divider)] overflow-hidden">
+                <div
+                  className="h-full bg-[var(--accent-primary)] rounded-full"
+                  style={{
+                    width: `${((activeFontSize - MIN_TEXT_SIZE) / (MAX_TEXT_SIZE - MIN_TEXT_SIZE)) * 100}%`,
+                  }}
+                />
+              </div>
+              <div
+                style={{
+                  left: `${((activeFontSize - MIN_TEXT_SIZE) / (MAX_TEXT_SIZE - MIN_TEXT_SIZE)) * 100}%`,
+                }}
+                className="absolute top-1/2 -translate-x-1/2 -translate-y-1/2 h-5 w-5 rounded-full bg-[var(--accent-primary)] border-2 border-white dark:border-[#171717] shadow-sm pointer-events-none"
+              />
+            </div>
+
+            <span className="min-w-[38px] text-right text-xs font-semibold tabular-nums text-[var(--text-primary)] shrink-0">
+              {activeFontSize}px
+            </span>
+
+            <button
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={closeSizeSlider}
+              aria-label="Done resizing"
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[var(--accent-soft)] text-[var(--accent-primary)] hover:opacity-85 cursor-pointer"
+            >
+              <Check className="h-3.5 w-3.5" strokeWidth={2.4} />
+            </button>
+          </div>
+        )}
 
         {isListening && (
           <div className="mt-2 flex items-center justify-between rounded-xl bg-[var(--accent-soft)] px-3 py-1.5 text-xs">

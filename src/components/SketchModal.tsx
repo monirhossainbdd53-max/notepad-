@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Eraser, Undo2, X } from 'lucide-react';
+import { useBackHandler } from '../context/NotesContext';
 
 interface SketchModalProps {
   open: boolean;
@@ -38,6 +39,7 @@ export function SketchModal({ open, onInsert, onClose }: SketchModalProps) {
     }
   }, [open]);
 
+  useBackHandler(open, onClose);
   if (!open) return null;
 
   const getCoords = (e: React.PointerEvent<HTMLCanvasElement>) => {

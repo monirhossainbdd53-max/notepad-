@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Crown, Delete, Lock, X } from 'lucide-react';
+import { useBackHandler } from '../context/NotesContext';
 
 interface PinDialogProps {
   open: boolean;
@@ -32,6 +33,7 @@ export function PinDialog({
     }
   }, [open, mode]);
 
+  useBackHandler(open, onClose);
   if (!open) return null;
 
   const handleDigit = (d: string) => {
@@ -181,6 +183,7 @@ interface UpgradePromptDialogProps {
 }
 
 export function UpgradePromptDialog({ reason, onUpgrade, onClose }: UpgradePromptDialogProps) {
+  useBackHandler(Boolean(reason), onClose);
   if (!reason) return null;
 
   return (
