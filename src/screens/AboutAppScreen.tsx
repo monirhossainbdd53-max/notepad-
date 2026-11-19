@@ -1,5 +1,5 @@
 import React from 'react';
-import { ChevronLeft, ChevronRight, FileText, Globe } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Globe } from 'lucide-react';
 import teamDesignerImg from '../assets/images/team_designer_1795044479332.jpg';
 import teamEngineerImg from '../assets/images/team_engineer_1795044479765.jpg';
 import teamManagerImg from '../assets/images/team_manager_1795044479272.jpg';
@@ -157,9 +157,12 @@ export function AboutAppScreen() {
       <section className="px-4 sm:px-8 pt-2 pb-6 space-y-3.5 max-w-2xl mx-auto">
         {/* Natural Centered Brand Card */}
         <div className="rounded-3xl bg-[var(--bg-card)] border border-[var(--divider)] py-4 px-5 flex flex-col items-center text-center">
-          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[var(--accent-soft)] text-[var(--accent-primary)]">
-            <FileText className="h-6 w-6" strokeWidth={1.75} />
-          </div>
+          <img
+            src="/assets/aistudio/29d87ee3-5f06-40b0-be78-ca717d4901fe-removebg-preview_676c1b01.png"
+            alt="Notes logo"
+            referrerPolicy="no-referrer"
+            className="h-14 w-14 object-contain"
+          />
           <h2 className="mt-2.5 text-xl font-bold text-[var(--text-primary)]">Notes</h2>
           <p className="mt-0.5 text-sm text-[var(--text-secondary)]">Capture your thoughts</p>
           <p className="mt-1.5 text-xs text-[var(--text-secondary)] tabular-nums">Version 1.0.0</p>

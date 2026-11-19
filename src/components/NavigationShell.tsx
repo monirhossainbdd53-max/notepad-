@@ -104,9 +104,12 @@ export function NavigationShell({
             onClick={() => navigate('home')}
             className="flex items-center gap-2.5 text-left cursor-pointer"
           >
-            <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-[var(--accent-soft)] text-[var(--accent-primary)]">
-              <FileText className="h-4 w-4" strokeWidth={2.2} />
-            </span>
+            <img
+              src="/assets/aistudio/29d87ee3-5f06-40b0-be78-ca717d4901fe-removebg-preview_676c1b01.png"
+              alt="Notes"
+              referrerPolicy="no-referrer"
+              className="h-8 w-8 object-contain shrink-0"
+            />
             <span className="text-lg font-bold tracking-tight text-[var(--text-primary)]">
               Notes
             </span>

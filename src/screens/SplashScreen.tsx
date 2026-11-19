@@ -1,6 +1,8 @@
 import React from 'react';
-import { FileText } from 'lucide-react';
 import { useNotes } from '../context/NotesContext';
+
+const APP_LOGO_SRC =
+  '/assets/aistudio/29d87ee3-5f06-40b0-be78-ca717d4901fe-removebg-preview_676c1b01.png';
 
 export function SplashScreen() {
   const { navigate, completeOnboarding } = useNotes();
@@ -10,8 +12,13 @@ export function SplashScreen() {
       <div />
 
       <div className="flex flex-col items-center text-center max-w-sm">
-        <div className="flex h-20 w-20 items-center justify-center rounded-3xl bg-[var(--bg-card)] border border-[var(--divider)]">
-          <FileText className="h-9 w-9 text-[var(--text-primary)] dark:text-[var(--accent-primary)]" strokeWidth={1.75} />
+        <div className="h-22 w-22 flex items-center justify-center">
+          <img
+            src={APP_LOGO_SRC}
+            alt="Notes logo"
+            referrerPolicy="no-referrer"
+            className="h-full w-full object-contain"
+          />
         </div>
 
         <h1 className="mt-7 text-3xl sm:text-4xl font-bold tracking-tight text-[var(--text-primary)]">
