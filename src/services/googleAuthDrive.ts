@@ -2,6 +2,7 @@ import { Capacitor } from '@capacitor/core';
 import { SocialLogin } from '@capgo/capacitor-social-login';
 import { getApps, initializeApp } from 'firebase/app';
 import {
+  Auth,
   getAuth,
   GoogleAuthProvider,
   onAuthStateChanged,
@@ -16,8 +17,16 @@ import { Folder, Note } from '../types/notes';
 export const SCOPES = ['https://www.googleapis.com/auth/drive.file'];
 const BACKUP_FILE_NAME = 'notes-app-backup.json';
 
-const app = getApps().length > 0 ? getApps()[0] : initializeApp(firebaseConfig);
-export const auth = getAuth(app);
+export const isFirebaseConfigured = Boolean(
+  firebaseConfig.apiKey && firebaseConfig.projectId && firebaseConfig.appId
+);
+
+const app = isFirebaseConfigured
+  ? getApps().length > 0
+    ? getApps()[0]
+    : initializeApp(firebaseConfig)
+  : null;
+export const auth: Auth | null = app ? getAuth(app) : null;
 
 const provider = new GoogleAuthProvider();
 SCOPES.forEach((scope) => provider.addScope(scope));
@@ -38,6 +47,9 @@ function isNativeApp(): boolean {
 
 async function ensureNativeSocialLoginInitialized(): Promise<void> {
   if (nativeInitialized) return;
+  if (!firebaseConfig.oAuthClientId) {
+    throw new Error('Google OAuth Client ID is not configured yet');
+  }
   await SocialLogin.initialize({
     google: {
       webClientId: firebaseConfig.oAuthClientId,
@@ -58,6 +70,10 @@ export interface DriveBackupPayload {
 export function initFirebaseAuth(
   onUserChange: (user: User | null, hasDriveToken: boolean) => void
 ) {
+  if (!auth) {
+    onUserChange(null, false);
+    return () => {};
+  }
   return onAuthStateChanged(auth, (user) => {
     if (user) {
       onUserChange(user, Boolean(cachedAccessToken));
@@ -73,6 +89,9 @@ export function initFirebaseAuth(
 export async function signInWithGoogle(
   forceRefreshToken = false
 ): Promise<{ user: User; accessToken: string }> {
+  if (!auth) {
+    throw new Error('Firebase is not configured yet');
+  }
   try {
     isSigningIn = true;
 
@@ -131,7 +150,9 @@ export async function signOutGoogle(): Promise<void> {
       // Ignore native logout cleanup errors
     }
   }
-  await signOut(auth);
+  if (auth) {
+    await signOut(auth);
+  }
 }
 
 export function hasCachedDriveToken(): boolean {

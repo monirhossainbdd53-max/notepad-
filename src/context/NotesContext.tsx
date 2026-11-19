@@ -442,7 +442,16 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         errObj?.code === 'USER_CANCELLED' ||
         rawMsg.includes('popup-closed') ||
         rawMsg.includes('cancel');
-      showToast(isCancelled ? 'Sign-in cancelled' : 'Could not sign in with Google', 'danger');
+      const detail = errObj?.code || errObj?.message || '';
+      const shortDetail = detail.length > 72 ? `${detail.slice(0, 72)}...` : detail;
+      showToast(
+        isCancelled
+          ? 'Sign-in cancelled'
+          : shortDetail
+            ? `Sign-in failed: ${shortDetail}`
+            : 'Could not sign in with Google',
+        'danger'
+      );
     } finally {
       setAuthLoading(false);
     }
