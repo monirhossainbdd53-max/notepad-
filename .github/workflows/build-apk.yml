@@ -10,6 +10,8 @@ on:
 jobs:
   build-apk:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout repository
@@ -159,15 +161,22 @@ jobs:
             --v1-signing-enabled true \
             --v2-signing-enabled true \
             --v3-signing-enabled true \
-            --out release-apk/Notes-Release.apk \
+            --out release-apk/Notes.apk \
             /tmp/app-release-aligned.apk
 
-          "$APKSIGNER" verify --verbose release-apk/Notes-Release.apk
+          "$APKSIGNER" verify --verbose release-apk/Notes.apk
           rm -f "$KEYSTORE_FILE" /tmp/app-release-aligned.apk
 
-      - name: Upload Signed Release APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: Notes-Release-APK
-          path: release-apk/Notes-Release.apk
-          retention-days: 30
+      - name: Publish Notes.apk to GitHub Releases
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="v1.0.0"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" release-apk/Notes.apk --clobber
+          else
+            gh release create "$TAG" release-apk/Notes.apk \
+              --title "Notes v1.0.0" \
+              --notes "Signed Android Release APK (Notes.apk)" \
+              --target "${{ github.sha }}"
+          fi
