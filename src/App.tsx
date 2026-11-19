@@ -21,6 +21,7 @@ import { AccountScreen } from './screens/AccountScreen';
 import { PremiumScreen } from './screens/PremiumScreen';
 import { HelpSupportScreen } from './screens/HelpSupportScreen';
 import { AboutAppScreen } from './screens/AboutAppScreen';
+import { AdminPanelScreen } from './screens/AdminPanelScreen';
 
 function ScreenRouter() {
   const {
@@ -74,6 +75,8 @@ function ScreenRouter() {
         return <HelpSupportScreen />;
       case 'about':
         return <AboutAppScreen />;
+      case 'admin':
+        return <AdminPanelScreen />;
       default:
         return <NotesHomeScreen />;
     }

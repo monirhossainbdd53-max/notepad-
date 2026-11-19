@@ -13,6 +13,7 @@ import {
   Note,
   NoteFontSize,
   NotificationSettings,
+  PreviewModeConfig,
   ScreenName,
   ThemePalette,
   ThemePreference,
@@ -32,6 +33,15 @@ import {
   restorePurchaseOnServer,
   verifyPurchaseTransaction,
 } from '../services/billingService';
+import {
+  DEFAULT_PREVIEW_CONFIG,
+  FirestoreSyncState,
+  getPreviewDurationMs,
+  isAdminAccount,
+  loadCachedPreviewConfig,
+  savePreviewModeConfig,
+  subscribePreviewModeConfig,
+} from '../services/adminConfigService';
 
 const STORAGE_KEY = 'notes_app_state_v2';
 
@@ -48,6 +58,7 @@ interface PersistedState {
   account: UserAccount;
   recentSearches: string[];
   hasOnboarded: boolean;
+  previewStartedAt: number;
 }
 
 interface NavigateOptions {
@@ -81,6 +92,17 @@ interface NotesContextValue {
   setNoteFontSize: (size: NoteFontSize) => void;
   isPremium: boolean;
   setIsPremium: (value: boolean) => void;
+  hasPaidSubscription: boolean;
+  isPreviewAvailable: boolean;
+  previewConfig: PreviewModeConfig;
+  previewSyncState: FirestoreSyncState;
+  previewSyncError: string | null;
+  previewStartedAt: number;
+  isAdmin: boolean;
+  adminSaving: boolean;
+  updateAdminPreviewConfig: (
+    next: Pick<PreviewModeConfig, 'enabled' | 'days' | 'hours' | 'minutes' | 'seconds'>
+  ) => Promise<boolean>;
   canCreateNote: boolean;
   canCreateFolder: boolean;
   maxImagesAllowed: number;
@@ -153,13 +175,27 @@ const defaultPersistedState: PersistedState = {
   account: INITIAL_ACCOUNT,
   recentSearches: INITIAL_RECENT_SEARCHES,
   hasOnboarded: false,
+  previewStartedAt: Date.now(),
 };
 
 function loadInitialState(): PersistedState {
+  const fallbackNow = Date.now();
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return defaultPersistedState;
+    if (!raw) {
+      return {
+        ...defaultPersistedState,
+        previewStartedAt: fallbackNow,
+      };
+    }
     const parsed = JSON.parse(raw) as Partial<PersistedState>;
+    const previewStartedAt =
+      typeof parsed.previewStartedAt === 'number' &&
+      Number.isFinite(parsed.previewStartedAt) &&
+      parsed.previewStartedAt > 0
+        ? parsed.previewStartedAt
+        : fallbackNow;
+
     return {
       notes: Array.isArray(parsed.notes) ? parsed.notes : defaultPersistedState.notes,
       folders: Array.isArray(parsed.folders) ? parsed.folders : defaultPersistedState.folders,
@@ -198,9 +234,13 @@ function loadInitialState(): PersistedState {
         ? parsed.recentSearches
         : defaultPersistedState.recentSearches,
       hasOnboarded: Boolean(parsed.hasOnboarded),
+      previewStartedAt,
     };
   } catch {
-    return defaultPersistedState;
+    return {
+      ...defaultPersistedState,
+      previewStartedAt: fallbackNow,
+    };
   }
 }
 
@@ -234,6 +274,14 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   const [account, setAccount] = useState<UserAccount>(initial.account);
   const [recentSearches, setRecentSearches] = useState<string[]>(initial.recentSearches);
   const [hasOnboarded, setHasOnboarded] = useState<boolean>(initial.hasOnboarded);
+  const [previewStartedAt] = useState<number>(initial.previewStartedAt);
+  const [previewConfig, setPreviewConfig] = useState<PreviewModeConfig>(() =>
+    loadCachedPreviewConfig()
+  );
+  const [previewSyncState, setPreviewSyncState] = useState<FirestoreSyncState>('loading');
+  const [previewSyncError, setPreviewSyncError] = useState<string | null>(null);
+  const [nowMs, setNowMs] = useState<number>(() => Date.now());
+  const [adminSaving, setAdminSaving] = useState(false);
   const [authLoading, setAuthLoading] = useState(false);
   const [driveBusy, setDriveBusy] = useState(false);
   const [billingBusy, setBillingBusy] = useState(false);
@@ -276,6 +324,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         account,
         recentSearches,
         hasOnboarded,
+        previewStartedAt,
       };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
     } catch {
@@ -294,6 +343,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     account,
     recentSearches,
     hasOnboarded,
+    previewStartedAt,
   ]);
 
   useEffect(() => {
@@ -354,6 +404,65 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     void syncLocalNotifications(initial.notifications, false);
   }, [initial.notifications]);
+
+  useEffect(() => {
+    const unsubscribe = subscribePreviewModeConfig((config, syncState, errMsg) => {
+      setPreviewConfig(config || DEFAULT_PREVIEW_CONFIG);
+      setPreviewSyncState(syncState);
+      setPreviewSyncError(errMsg || null);
+      setNowMs(Date.now());
+    });
+    return () => unsubscribe();
+  }, []);
+
+  const isAdmin = useMemo(() => isAdminAccount(account), [account]);
+
+  const hasPaidSubscription = useMemo(() => {
+    if (!account.lastTransactionId) return false;
+    if (!account.premiumExpiresAt) return true;
+    const expiry = new Date(account.premiumExpiresAt).getTime();
+    return Number.isFinite(expiry) && expiry > nowMs;
+  }, [account.lastTransactionId, account.premiumExpiresAt, nowMs]);
+
+  const previewDurationMs = useMemo(
+    () => getPreviewDurationMs(previewConfig),
+    [previewConfig]
+  );
+
+  const isPreviewAvailable = useMemo(() => {
+    if (!previewConfig.enabled || previewDurationMs <= 0) return false;
+    return nowMs < previewStartedAt + previewDurationMs;
+  }, [nowMs, previewConfig.enabled, previewDurationMs, previewStartedAt]);
+
+  useEffect(() => {
+    if (!previewConfig.enabled || previewDurationMs <= 0) return;
+    const expiresAt = previewStartedAt + previewDurationMs;
+    const remaining = expiresAt - Date.now();
+    if (remaining <= 0) {
+      setNowMs(Date.now());
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      setNowMs(Date.now());
+    }, Math.min(remaining + 25, 2147483647));
+
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        setNowMs(Date.now());
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => {
+      window.clearTimeout(timer);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
+  }, [previewConfig.enabled, previewDurationMs, previewStartedAt, nowMs]);
+
+  useEffect(() => {
+    if (isPremium && !isPreviewAvailable && !hasPaidSubscription) {
+      setIsPremiumState(false);
+    }
+  }, [hasPaidSubscription, isPremium, isPreviewAvailable]);
 
   useEffect(() => {
     if (!toast) return;
@@ -736,10 +845,43 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
 
   const setIsPremium = useCallback(
     (value: boolean) => {
+      if (value && !isPreviewAvailable && !hasPaidSubscription) {
+        return;
+      }
       setIsPremiumState(value);
       showToast(value ? 'Previewing Premium plan' : 'Previewing Free plan');
     },
-    [showToast]
+    [hasPaidSubscription, isPreviewAvailable, showToast]
+  );
+
+  const updateAdminPreviewConfig = useCallback(
+    async (
+      next: Pick<PreviewModeConfig, 'enabled' | 'days' | 'hours' | 'minutes' | 'seconds'>
+    ): Promise<boolean> => {
+      if (!isAdmin) {
+        showToast('Admin access required', 'danger');
+        return false;
+      }
+      setAdminSaving(true);
+      try {
+        const saved = await savePreviewModeConfig(next);
+        setPreviewConfig(saved);
+        setPreviewSyncState('synced');
+        setPreviewSyncError(null);
+        setNowMs(Date.now());
+        showToast('Preview timer saved');
+        return true;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Could not save admin settings';
+        setPreviewSyncState('error');
+        setPreviewSyncError(msg);
+        showToast(msg, 'danger');
+        return false;
+      } finally {
+        setAdminSaving(false);
+      }
+    },
+    [isAdmin, showToast]
   );
 
   const setNotePin = useCallback(
@@ -1179,6 +1321,15 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     setNoteFontSize,
     isPremium,
     setIsPremium,
+    hasPaidSubscription,
+    isPreviewAvailable,
+    previewConfig,
+    previewSyncState,
+    previewSyncError,
+    previewStartedAt,
+    isAdmin,
+    adminSaving,
+    updateAdminPreviewConfig,
     canCreateNote,
     canCreateFolder,
     maxImagesAllowed,

@@ -18,7 +18,8 @@ export type ScreenName =
   | 'account'
   | 'premium'
   | 'help'
-  | 'about';
+  | 'about'
+  | 'admin';
 
 export type ThemePreference = 'light' | 'dark' | 'system';
 
@@ -80,4 +81,14 @@ export interface ToastMessage {
   text: string;
   variant?: 'default' | 'danger';
   undoAction?: () => void;
+}
+
+export interface PreviewModeConfig {
+  enabled: boolean;
+  days: number;
+  hours: number;
+  minutes: number;
+  seconds: number;
+  updatedAt: string;
+  updatedBy?: string;
 }

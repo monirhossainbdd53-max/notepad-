@@ -64,6 +64,8 @@ export function PremiumScreen() {
     account,
     isPremium,
     setIsPremium,
+    hasPaidSubscription,
+    isPreviewAvailable,
     activeNotes,
     folders,
     authLoading,
@@ -280,46 +282,46 @@ export function PremiumScreen() {
           </button>
         </div>
 
-        {/* Subtle Plan Mode Switcher */}
-        <div className="rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] px-4 py-3 flex items-center justify-between gap-3">
-          <div className="min-w-0">
-            <p className="text-xs font-semibold text-[var(--text-primary)]">
-              Preview Mode
-            </p>
-            <p className="text-xs text-[var(--text-secondary)] tabular-nums truncate">
-              {isPremium
-                ? account.lastTransactionId
-                  ? `Verified · ${account.lastTransactionId}`
-                  : 'All Premium features unlocked'
-                : `${activeNotes.length}/${FREE_LIMITS.maxActiveNotes} notes · ${folders.length}/${FREE_LIMITS.maxFolders} folders used`}
-            </p>
-          </div>
+        {/* Subtle Plan Mode Switcher (auto-hidden when preview timer expires) */}
+        {isPreviewAvailable && !hasPaidSubscription && (
+          <div className="rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] px-4 py-3 flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-xs font-semibold text-[var(--text-primary)]">
+                Preview Mode
+              </p>
+              <p className="text-xs text-[var(--text-secondary)] tabular-nums truncate">
+                {isPremium
+                  ? 'All Premium features unlocked'
+                  : `${activeNotes.length}/${FREE_LIMITS.maxActiveNotes} notes · ${folders.length}/${FREE_LIMITS.maxFolders} folders used`}
+              </p>
+            </div>
 
-          <div className="flex items-center gap-1 rounded-xl bg-[var(--bg-canvas)] p-1 border border-[var(--divider)] shrink-0">
-            <button
-              type="button"
-              onClick={() => setIsPremium(false)}
-              className={`min-h-[32px] px-3 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
-                !isPremium
-                  ? 'bg-[var(--bg-card)] text-[var(--text-primary)] border border-[var(--divider)]'
-                  : 'text-[var(--text-secondary)]'
-              }`}
-            >
-              Free
-            </button>
-            <button
-              type="button"
-              onClick={() => setIsPremium(true)}
-              className={`min-h-[32px] px-3 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
-                isPremium
-                  ? 'bg-[var(--accent-primary)] text-[#171717]'
-                  : 'text-[var(--text-secondary)]'
-              }`}
-            >
-              Premium
-            </button>
+            <div className="flex items-center gap-1 rounded-xl bg-[var(--bg-canvas)] p-1 border border-[var(--divider)] shrink-0">
+              <button
+                type="button"
+                onClick={() => setIsPremium(false)}
+                className={`min-h-[32px] px-3 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
+                  !isPremium
+                    ? 'bg-[var(--bg-card)] text-[var(--text-primary)] border border-[var(--divider)]'
+                    : 'text-[var(--text-secondary)]'
+                }`}
+              >
+                Free
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsPremium(true)}
+                className={`min-h-[32px] px-3 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
+                  isPremium
+                    ? 'bg-[var(--accent-primary)] text-[#171717]'
+                    : 'text-[var(--text-secondary)]'
+                }`}
+              >
+                Premium
+              </button>
+            </div>
           </div>
-        </div>
+        )}
       </section>
 
       <InfoSheetDialog

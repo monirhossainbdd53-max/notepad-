@@ -21,12 +21,12 @@ export const isFirebaseConfigured = Boolean(
   firebaseConfig.apiKey && firebaseConfig.projectId && firebaseConfig.appId
 );
 
-const app = isFirebaseConfigured
+export const firebaseApp = isFirebaseConfigured
   ? getApps().length > 0
     ? getApps()[0]
     : initializeApp(firebaseConfig)
   : null;
-export const auth: Auth | null = app ? getAuth(app) : null;
+export const auth: Auth | null = firebaseApp ? getAuth(firebaseApp) : null;
 
 const provider = new GoogleAuthProvider();
 SCOPES.forEach((scope) => provider.addScope(scope));

@@ -16,6 +16,7 @@ import {
   Moon,
   RotateCcw,
   Shield,
+  ShieldCheck,
   User,
 } from 'lucide-react';
 import { ConfirmDialog, InfoSheetDialog } from '../components/ConfirmDialog';
@@ -31,6 +32,7 @@ export function SettingsScreen() {
     theme,
     palette,
     isPremium,
+    isAdmin,
     notePin,
     setNotePin,
     requestUpgrade,
@@ -330,6 +332,27 @@ export function SettingsScreen() {
             </button>
           </div>
         </div>
+
+        {isAdmin && (
+          <div>
+            <h2 className="px-1 mb-2 text-xs font-semibold text-[var(--text-secondary)]">
+              Admin
+            </h2>
+            <div className="rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)]">
+              <button
+                type="button"
+                onClick={() => navigate('admin')}
+                className="flex w-full min-h-[54px] items-center justify-between px-4 text-left hover:bg-[var(--bg-subtle)]/50 transition-colors cursor-pointer rounded-2xl"
+              >
+                <span className="flex items-center gap-3 text-sm font-medium">
+                  <ShieldCheck className="h-4 w-4 text-[var(--accent-primary)]" strokeWidth={1.9} />
+                  Admin Panel
+                </span>
+                <ChevronRight className="h-4 w-4 text-[var(--text-secondary)]" strokeWidth={1.75} />
+              </button>
+            </div>
+          </div>
+        )}
       </section>
 
       <InfoSheetDialog
