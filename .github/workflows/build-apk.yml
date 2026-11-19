@@ -26,13 +26,18 @@ jobs:
           distribution: 'temurin'
           java-version: '21'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
       - name: Accept Android SDK licenses & install SDK 36
         run: |
-          yes | sdkmanager --licenses > /dev/null || true
-          sdkmanager "platforms;android-36" "build-tools;36.0.0"
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          SDKMANAGER=$(command -v sdkmanager || find "$SDK_ROOT/cmdline-tools" -name sdkmanager -type f 2>/dev/null | head -n 1)
+          if [ -z "$SDKMANAGER" ]; then
+            echo "sdkmanager not found under $SDK_ROOT"
+            exit 1
+          fi
+          echo "Using SDK_ROOT=$SDK_ROOT"
+          echo "Using sdkmanager=$SDKMANAGER"
+          yes | "$SDKMANAGER" --sdk_root="$SDK_ROOT" --licenses > /dev/null 2>&1 || true
+          yes | "$SDKMANAGER" --sdk_root="$SDK_ROOT" "platforms;android-36" "build-tools;36.0.0"
 
       - name: Install dependencies
         run: npm install --legacy-peer-deps
@@ -46,6 +51,8 @@ jobs:
           if [ ! -d "android" ]; then
             npx cap add android
           fi
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          echo "sdk.dir=$SDK_ROOT" > android/local.properties
 
       - name: Ensure Android permissions
         run: |
@@ -66,8 +73,8 @@ jobs:
           LOGO="public/assets/aistudio/29d87ee3-5f06-40b0-be78-ca717d4901fe-removebg-preview_676c1b01.png"
           if [ -f "$LOGO" ]; then
             if ! command -v convert >/dev/null 2>&1 && ! command -v magick >/dev/null 2>&1; then
-              sudo apt-get update -qq
-              sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq imagemagick
+              sudo apt-get update -qq || true
+              sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq imagemagick || true
             fi
             CMD=$(command -v magick || command -v convert || true)
             if [ -n "$CMD" ]; then
