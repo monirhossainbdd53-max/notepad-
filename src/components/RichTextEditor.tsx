@@ -8,9 +8,11 @@ import {
   Highlighter,
   ImagePlus,
   Italic,
+  Languages,
   Link2,
   List,
   ListOrdered,
+  Loader2,
   Lock,
   Mic,
   MicOff,
@@ -25,9 +27,12 @@ import {
   Undo2,
   X,
 } from 'lucide-react';
+import { Capacitor } from '@capacitor/core';
+import { SpeechRecognition as NativeSpeechRecognition } from '@capacitor-community/speech-recognition';
 import { useBackHandler, useNotes } from '../context/NotesContext';
 import { FREE_LIMITS } from '../types/notes';
 import { readAndCompressImage, stripHtmlToText } from '../utils/noteHelpers';
+import { TRANSLATE_LANGUAGES, translateText } from '../utils/translateHelper';
 import { SketchModal } from './SketchModal';
 
 interface SpeechRecognitionAlternativeLike {
@@ -44,12 +49,16 @@ interface SpeechRecognitionEventLike {
   results: ArrayLike<SpeechRecognitionResultLike>;
 }
 
+interface SpeechRecognitionErrorEventLike {
+  error?: string;
+}
+
 interface SpeechRecognitionInstance {
   continuous: boolean;
   interimResults: boolean;
   lang: string;
   onresult: ((event: SpeechRecognitionEventLike) => void) | null;
-  onerror: (() => void) | null;
+  onerror: ((event: SpeechRecognitionErrorEventLike) => void) | null;
   onend: (() => void) | null;
   start: () => void;
   stop: () => void;
@@ -186,6 +195,12 @@ export function RichTextEditor({
   const [linkText, setLinkText] = useState('');
   const [isListening, setIsListening] = useState(false);
   const [speechLang, setSpeechLang] = useState<'bn-BD' | 'en-US'>('bn-BD');
+  const [interimTranscript, setInterimTranscript] = useState('');
+  const manualStopRef = useRef(false);
+  const [translateOpen, setTranslateOpen] = useState(false);
+  const [translateSourceText, setTranslateSourceText] = useState('');
+  const [translatingLang, setTranslatingLang] = useState<string | null>(null);
+  const translateRangeRef = useRef<Range | null>(null);
   const [sizeSliderOpen, setSizeSliderOpen] = useState(false);
   const [activeFontSize, setActiveFontSize] = useState(18);
   const activeSizeGroupRef = useRef<string | null>(null);
@@ -673,77 +688,256 @@ export function RichTextEditor({
     setSketchOpen(true);
   };
 
-  const handleToggleVoice = (overrideLang?: 'bn-BD' | 'en-US') => {
-    const win = window as unknown as {
-      SpeechRecognition?: SpeechRecognitionCtor;
-      webkitSpeechRecognition?: SpeechRecognitionCtor;
-    };
-    const SpeechRec = win.SpeechRecognition || win.webkitSpeechRecognition;
+  const closeTranslateBar = useCallback(() => {
+    setTranslateOpen(false);
+    setTranslateSourceText('');
+    setTranslatingLang(null);
+    translateRangeRef.current = null;
+  }, []);
 
-    if (!SpeechRec) {
-      showToast('Voice typing is not supported in this browser');
+  useBackHandler(translateOpen, closeTranslateBar);
+
+  const handleOpenTranslateBar = () => {
+    const editor = editorRef.current;
+    if (!editor) return;
+
+    const sel = window.getSelection();
+    let range: Range | null = null;
+    if (sel && sel.rangeCount > 0 && editor.contains(sel.getRangeAt(0).commonAncestorContainer)) {
+      range = sel.getRangeAt(0);
+    } else if (
+      savedRangeRef.current &&
+      editor.contains(savedRangeRef.current.commonAncestorContainer)
+    ) {
+      range = savedRangeRef.current;
+    }
+
+    const selectedText = range ? range.toString().trim() : '';
+    if (!range || range.collapsed || !selectedText) {
+      if (translateOpen) {
+        closeTranslateBar();
+      } else {
+        showToast('Select text first to translate');
+      }
+      return;
+    }
+
+    translateRangeRef.current = range.cloneRange();
+    setTranslateSourceText(selectedText);
+    setSizeSliderOpen(false);
+    setInsertMenuOpen(false);
+    setTranslateOpen(true);
+  };
+
+  const handleRunTranslate = async (targetCode: string, targetLabel: string) => {
+    if (!translateSourceText || translatingLang) return;
+    setTranslatingLang(targetCode);
+    try {
+      const translated = await translateText(translateSourceText, targetCode);
+      const editor = editorRef.current;
+      const savedRange = translateRangeRef.current;
+      if (editor && savedRange && editor.contains(savedRange.commonAncestorContainer)) {
+        editor.focus();
+        const sel = window.getSelection();
+        if (sel) {
+          sel.removeAllRanges();
+          sel.addRange(savedRange);
+        }
+        const replaced = document.execCommand('insertText', false, translated);
+        if (!replaced) {
+          savedRange.deleteContents();
+          const textNode = document.createTextNode(translated);
+          savedRange.insertNode(textNode);
+          savedRange.setStartAfter(textNode);
+          savedRange.collapse(true);
+          if (sel) {
+            sel.removeAllRanges();
+            sel.addRange(savedRange);
+          }
+        }
+        saveSelection();
+        emitChange();
+      }
+      closeTranslateBar();
+      showToast(`Translated to ${targetLabel}`);
+    } catch {
+      showToast('Translation failed. Check your connection.');
+      setTranslatingLang(null);
+    }
+  };
+
+  const stopWebRecognition = useCallback(() => {
+    manualStopRef.current = true;
+    try {
+      recognitionRef.current?.stop();
+    } catch {
+      // Ignore stop errors
+    }
+    recognitionRef.current = null;
+    setIsListening(false);
+    setInterimTranscript('');
+  }, []);
+
+  const startWebRecognition = useCallback(
+    (activeLang: 'bn-BD' | 'en-US') => {
+      const win = window as unknown as {
+        SpeechRecognition?: SpeechRecognitionCtor;
+        webkitSpeechRecognition?: SpeechRecognitionCtor;
+      };
+      const SpeechRec = win.SpeechRecognition || win.webkitSpeechRecognition;
+
+      if (!SpeechRec) {
+        showToast('Voice typing is not supported in this browser');
+        return;
+      }
+
+      manualStopRef.current = false;
+      saveSelection();
+      const recognition = new SpeechRec();
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.lang = activeLang;
+
+      recognition.onresult = (event) => {
+        let finalText = '';
+        let interimText = '';
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          const piece = event.results[i][0]?.transcript || '';
+          if (event.results[i].isFinal) {
+            finalText += `${piece.trim()} `;
+          } else {
+            interimText += piece;
+          }
+        }
+        setInterimTranscript(interimText.trim());
+        if (finalText.trim() && editorRef.current) {
+          restoreSavedRange();
+          document.execCommand('insertText', false, finalText);
+          saveSelection();
+          emitChange();
+        }
+      };
+
+      recognition.onerror = (event) => {
+        const errCode = event?.error || '';
+        setIsListening(false);
+        setInterimTranscript('');
+        if (errCode === 'aborted' || manualStopRef.current) return;
+        if (errCode === 'not-allowed' || errCode === 'service-not-allowed') {
+          showToast('Microphone permission denied');
+        } else if (errCode === 'no-speech') {
+          showToast('No speech detected. Try again.');
+        } else if (errCode === 'audio-capture') {
+          showToast('No microphone found');
+        } else if (errCode === 'network') {
+          showToast('Network error during voice typing');
+        } else {
+          showToast('Could not capture voice input');
+        }
+      };
+
+      recognition.onend = () => {
+        setIsListening(false);
+        setInterimTranscript('');
+      };
+
+      try {
+        recognitionRef.current = recognition;
+        recognition.start();
+        setIsListening(true);
+        setInsertMenuOpen(false);
+      } catch {
+        setIsListening(false);
+        setInterimTranscript('');
+        showToast('Microphone permission unavailable');
+      }
+    },
+    [emitChange, restoreSavedRange, saveSelection, showToast]
+  );
+
+  const handleToggleVoice = async (overrideLang?: 'bn-BD' | 'en-US') => {
+    const activeLang = overrideLang || speechLang;
+    if (overrideLang) setSpeechLang(overrideLang);
+
+    let isNative = false;
+    try {
+      isNative = Capacitor.isNativePlatform();
+    } catch {
+      isNative = false;
+    }
+
+    if (isNative) {
+      if (isListening && !overrideLang) {
+        try {
+          await NativeSpeechRecognition.stop();
+        } catch {
+          // Ignore stop errors
+        }
+        setIsListening(false);
+        return;
+      }
+
+      try {
+        const { available } = await NativeSpeechRecognition.available();
+        if (!available) {
+          showToast('Voice typing is unavailable on this device');
+          return;
+        }
+        const perm = await NativeSpeechRecognition.checkPermissions();
+        if (perm.speechRecognition !== 'granted') {
+          const requested = await NativeSpeechRecognition.requestPermissions();
+          if (requested.speechRecognition !== 'granted') {
+            showToast('Microphone permission denied');
+            return;
+          }
+        }
+
+        saveSelection();
+        setInsertMenuOpen(false);
+        setIsListening(true);
+        const result = await NativeSpeechRecognition.start({
+          language: activeLang,
+          maxResults: 1,
+          prompt: activeLang === 'bn-BD' ? 'বাংলায় বলুন...' : 'Speak in English...',
+          partialResults: false,
+          popup: true,
+        });
+        setIsListening(false);
+        const spoken = result?.matches?.[0]?.trim();
+        if (spoken && editorRef.current) {
+          restoreSavedRange();
+          document.execCommand('insertText', false, `${spoken} `);
+          saveSelection();
+          emitChange();
+        }
+      } catch {
+        setIsListening(false);
+      }
       return;
     }
 
     if (isListening && !overrideLang) {
-      try {
-        recognitionRef.current?.stop();
-      } catch {
-        // Ignore stop errors
-      }
-      setIsListening(false);
+      stopWebRecognition();
       return;
     }
 
     if (isListening && overrideLang) {
-      try {
-        recognitionRef.current?.stop();
-      } catch {
-        // Ignore stop errors
-      }
+      stopWebRecognition();
+      window.setTimeout(() => startWebRecognition(activeLang), 180);
+      return;
     }
 
-    const activeLang = overrideLang || speechLang;
-    if (overrideLang) setSpeechLang(overrideLang);
+    startWebRecognition(activeLang);
+  };
 
-    saveSelection();
-    const recognition = new SpeechRec();
-    recognition.continuous = true;
-    recognition.interimResults = false;
-    recognition.lang = activeLang;
-
-    recognition.onresult = (event) => {
-      let transcript = '';
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        if (event.results[i].isFinal) {
-          transcript += `${event.results[i][0].transcript} `;
-        }
-      }
-      if (transcript.trim() && editorRef.current) {
-        restoreSavedRange();
-        document.execCommand('insertText', false, transcript);
-        saveSelection();
-        emitChange();
-      }
-    };
-
-    recognition.onerror = () => {
-      setIsListening(false);
-      showToast('Could not capture voice input');
-    };
-
-    recognition.onend = () => {
-      setIsListening(false);
-    };
-
-    try {
-      recognitionRef.current = recognition;
-      recognition.start();
-      setIsListening(true);
-      setInsertMenuOpen(false);
-    } catch {
-      setIsListening(false);
-      showToast('Microphone permission unavailable');
+  const handleSwitchVoiceLanguage = (nextLang: 'bn-BD' | 'en-US') => {
+    setSpeechLang(nextLang);
+    setInsertMenuOpen(false);
+    if (isListening) {
+      stopWebRecognition();
+      window.setTimeout(() => startWebRecognition(nextLang), 180);
+    } else {
+      showToast(`Voice language: ${nextLang === 'bn-BD' ? 'বাংলা' : 'English'}`);
     }
   };
 
@@ -914,6 +1108,7 @@ export function RichTextEditor({
 
     activeSizeGroupRef.current = groupId;
     setActiveFontSize(initialSize);
+    closeTranslateBar();
     setSizeSliderOpen(true);
     emitChange();
   };
@@ -1300,6 +1495,19 @@ export function RichTextEditor({
                 <Mic className="h-4 w-4" strokeWidth={2} />
               )}
             </button>
+
+            <button
+              type="button"
+              onPointerDown={(e) => {
+                e.preventDefault();
+                handleOpenTranslateBar();
+              }}
+              aria-label="Translate selected text"
+              title="Translate selected text"
+              className={toolbarBtnClass(translateOpen)}
+            >
+              <Languages className="h-4 w-4" strokeWidth={2} />
+            </button>
           </div>
 
           <div className="flex items-center gap-0.5 sm:gap-1 shrink-0">
@@ -1359,7 +1567,7 @@ export function RichTextEditor({
 
                   <button
                     type="button"
-                    onClick={() => handleToggleVoice(speechLang === 'bn-BD' ? 'en-US' : 'bn-BD')}
+                    onClick={() => handleSwitchVoiceLanguage(speechLang === 'bn-BD' ? 'en-US' : 'bn-BD')}
                     className="flex w-full min-h-[40px] items-center justify-between px-3.5 text-sm text-[var(--text-primary)] hover:bg-[var(--bg-subtle)] cursor-pointer"
                   >
                     <span className="flex items-center gap-2.5">
@@ -1474,18 +1682,70 @@ export function RichTextEditor({
           </div>
         )}
 
+        {translateOpen && (
+          <div className="mt-2 rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] p-3 space-y-2.5">
+            <div className="flex items-center justify-between gap-2">
+              <div className="min-w-0 flex items-center gap-2">
+                <Languages className="h-4 w-4 text-[var(--accent-primary)] shrink-0" strokeWidth={2} />
+                <span className="text-xs font-semibold text-[var(--text-primary)] truncate">
+                  Translate: “{translateSourceText}”
+                </span>
+              </div>
+              <button
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={closeTranslateBar}
+                aria-label="Close translate"
+                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)] cursor-pointer"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+
+            <div className="flex flex-wrap gap-1.5">
+              {TRANSLATE_LANGUAGES.map((lang) => {
+                const busy = translatingLang === lang.code;
+                return (
+                  <button
+                    key={lang.code}
+                    type="button"
+                    disabled={Boolean(translatingLang)}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => handleRunTranslate(lang.code, lang.label)}
+                    className="inline-flex min-h-[32px] items-center gap-1.5 rounded-xl bg-[var(--bg-canvas)] border border-[var(--divider)] px-3 text-xs font-medium text-[var(--text-primary)] hover:border-[var(--accent-primary)]/70 disabled:opacity-60 transition-colors cursor-pointer"
+                  >
+                    {busy && <Loader2 className="h-3 w-3 animate-spin text-[var(--accent-primary)]" />}
+                    <span>{lang.nativeLabel}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         {isListening && (
-          <div className="mt-2 flex items-center justify-between rounded-xl bg-[var(--accent-soft)] px-3 py-1.5 text-xs">
-            <span className="font-medium text-[var(--text-primary)]">
-              Listening ({speechLang === 'bn-BD' ? 'বাংলা' : 'English'})… Speak now
+          <div className="mt-2 flex items-center justify-between gap-2 rounded-xl bg-[var(--accent-soft)] px-3 py-1.5 text-xs">
+            <span className="min-w-0 truncate font-medium text-[var(--text-primary)]">
+              {interimTranscript
+                ? interimTranscript
+                : `Listening (${speechLang === 'bn-BD' ? 'বাংলা' : 'English'})… Speak now`}
             </span>
-            <button
-              type="button"
-              onClick={() => handleToggleVoice()}
-              className="font-semibold text-[#E45B5B] cursor-pointer"
-            >
-              Stop
-            </button>
+            <div className="flex items-center gap-1.5 shrink-0">
+              <button
+                type="button"
+                onClick={() => handleSwitchVoiceLanguage(speechLang === 'bn-BD' ? 'en-US' : 'bn-BD')}
+                className="rounded-lg bg-[var(--bg-card)] px-2 py-0.5 text-[11px] font-semibold text-[var(--text-primary)] cursor-pointer"
+              >
+                {speechLang === 'bn-BD' ? 'বাংলা' : 'EN'}
+              </button>
+              <button
+                type="button"
+                onClick={() => handleToggleVoice()}
+                className="font-semibold text-[#E45B5B] px-1 cursor-pointer"
+              >
+                Stop
+              </button>
+            </div>
           </div>
         )}
       </div>
