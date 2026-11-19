@@ -20,6 +20,13 @@ import {
   UserAccount,
 } from '../types/notes';
 import { generateId } from '../utils/noteHelpers';
+import {
+  initFirebaseAuth,
+  restoreDriveBackup,
+  signInWithGoogle,
+  signOutGoogle,
+  uploadDriveBackup,
+} from '../services/googleAuthDrive';
 
 const STORAGE_KEY = 'notes_app_state_v2';
 
@@ -87,6 +94,13 @@ interface NotesContextValue {
   updateNotifications: (patch: Partial<NotificationSettings>) => void;
   account: UserAccount;
   updateAccount: (patch: Partial<UserAccount>) => void;
+  authLoading: boolean;
+  driveBusy: boolean;
+  hasDriveAccess: boolean;
+  signInGoogleAccount: () => Promise<void>;
+  signOutGoogleAccount: () => Promise<void>;
+  backupToGoogleDrive: () => Promise<boolean>;
+  restoreFromGoogleDrive: () => Promise<boolean>;
   recentSearches: string[];
   addRecentSearch: (query: string) => void;
   clearRecentSearches: () => void;
@@ -157,10 +171,22 @@ function loadInitialState(): PersistedState {
         ...defaultPersistedState.notifications,
         ...(parsed.notifications || {}),
       },
-      account: {
-        ...defaultPersistedState.account,
-        ...(parsed.account || {}),
-      },
+      account: (() => {
+        const saved = parsed.account;
+        if (
+          !saved ||
+          (!saved.uid &&
+            saved.name === 'Riyad Islam' &&
+            saved.email === 'riyadislambdd@gmail.com')
+        ) {
+          return defaultPersistedState.account;
+        }
+        return {
+          ...defaultPersistedState.account,
+          ...saved,
+          isGuest: saved.uid ? false : saved.isGuest !== false,
+        };
+      })(),
       recentSearches: Array.isArray(parsed.recentSearches)
         ? parsed.recentSearches
         : defaultPersistedState.recentSearches,
@@ -201,6 +227,9 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   const [account, setAccount] = useState<UserAccount>(initial.account);
   const [recentSearches, setRecentSearches] = useState<string[]>(initial.recentSearches);
   const [hasOnboarded, setHasOnboarded] = useState<boolean>(initial.hasOnboarded);
+  const [authLoading, setAuthLoading] = useState(false);
+  const [driveBusy, setDriveBusy] = useState(false);
+  const [hasDriveAccess, setHasDriveAccess] = useState(false);
 
   const [history, setHistory] = useState<HistoryEntry[]>([
     {
@@ -295,6 +324,26 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   }, [noteFontSize]);
 
   useEffect(() => {
+    const unsubscribe = initFirebaseAuth((user, hasToken) => {
+      setHasDriveAccess(hasToken);
+      if (user) {
+        setAccount((prev) => ({
+          ...prev,
+          uid: user.uid,
+          name: user.displayName || user.email?.split('@')[0] || 'Google User',
+          email: user.email || '',
+          photoUrl: user.photoURL || '',
+          emailVerified: Boolean(user.emailVerified),
+          isGuest: false,
+        }));
+      } else {
+        setAccount((prev) => (prev.uid ? INITIAL_ACCOUNT : { ...prev, isGuest: true }));
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  useEffect(() => {
     if (!toast) return;
     const duration = toast.undoAction ? 4000 : 2600;
     const timer = window.setTimeout(() => setToast(null), duration);
@@ -309,6 +358,89 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   );
 
   const dismissToast = useCallback(() => setToast(null), []);
+
+  const signInGoogleAccount = useCallback(async () => {
+    setAuthLoading(true);
+    try {
+      const { user } = await signInWithGoogle();
+      setHasDriveAccess(true);
+      setAccount((prev) => ({
+        ...prev,
+        uid: user.uid,
+        name: user.displayName || user.email?.split('@')[0] || 'Google User',
+        email: user.email || '',
+        photoUrl: user.photoURL || '',
+        emailVerified: Boolean(user.emailVerified),
+        isGuest: false,
+      }));
+      showToast(`Signed in as ${user.displayName || user.email || 'Google User'}`);
+    } catch (err) {
+      const msg =
+        err instanceof Error && err.message.includes('popup-closed')
+          ? 'Sign-in cancelled'
+          : 'Could not sign in with Google';
+      showToast(msg, 'danger');
+    } finally {
+      setAuthLoading(false);
+    }
+  }, [showToast]);
+
+  const signOutGoogleAccount = useCallback(async () => {
+    try {
+      await signOutGoogle();
+      setHasDriveAccess(false);
+      setAccount(INITIAL_ACCOUNT);
+      showToast('Signed out · Switched to Guest Account');
+    } catch {
+      showToast('Could not sign out', 'danger');
+    }
+  }, [showToast]);
+
+  const backupToGoogleDrive = useCallback(async (): Promise<boolean> => {
+    setDriveBusy(true);
+    try {
+      const result = await uploadDriveBackup({
+        version: 1,
+        exportedAt: new Date().toISOString(),
+        accountEmail: account.email || undefined,
+        notes,
+        folders,
+      });
+      setHasDriveAccess(true);
+      setAccount((prev) => ({ ...prev, lastDriveBackupAt: result.modifiedTime }));
+      showToast('Backed up to Google Drive');
+      return true;
+    } catch (err) {
+      showToast(
+        err instanceof Error ? err.message : 'Google Drive backup failed',
+        'danger'
+      );
+      return false;
+    } finally {
+      setDriveBusy(false);
+    }
+  }, [account.email, folders, notes, showToast]);
+
+  const restoreFromGoogleDrive = useCallback(async (): Promise<boolean> => {
+    setDriveBusy(true);
+    try {
+      const payload = await restoreDriveBackup();
+      setHasDriveAccess(true);
+      setNotes(payload.notes);
+      setFolders(payload.folders);
+      setAccount((prev) => ({ ...prev, lastDriveBackupAt: payload.exportedAt }));
+      showToast(`Restored ${payload.notes.length} notes from Google Drive`);
+      return true;
+    } catch (err) {
+      showToast(
+        err instanceof Error ? err.message : 'Google Drive restore failed',
+        'danger'
+      );
+      return false;
+    } finally {
+      setDriveBusy(false);
+    }
+  }, [showToast]);
 
   const requestUpgrade = useCallback((reason: string) => {
     setUpgradePromptReason(reason);
@@ -923,6 +1055,13 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     updateNotifications,
     account,
     updateAccount,
+    authLoading,
+    driveBusy,
+    hasDriveAccess,
+    signInGoogleAccount,
+    signOutGoogleAccount,
+    backupToGoogleDrive,
+    restoreFromGoogleDrive,
     recentSearches,
     addRecentSearch,
     clearRecentSearches,

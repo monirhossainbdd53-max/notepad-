@@ -64,8 +64,13 @@ export interface NotificationSettings {
 }
 
 export interface UserAccount {
+  uid?: string;
   name: string;
   email: string;
+  photoUrl?: string;
+  emailVerified?: boolean;
+  isGuest?: boolean;
+  lastDriveBackupAt?: string;
 }
 
 export interface ToastMessage {

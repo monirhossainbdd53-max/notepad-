@@ -1,23 +1,29 @@
 import React, { useState } from 'react';
 import {
   Bell,
+  CheckCircle2,
   ChevronRight,
   Cloud,
+  CloudDownload,
+  CloudUpload,
   Crown,
   Download,
   FileText,
   HelpCircle,
   Info,
+  Loader2,
   Lock,
   Moon,
   RotateCcw,
   Shield,
   User,
 } from 'lucide-react';
-import { InfoSheetDialog } from '../components/ConfirmDialog';
+import { ConfirmDialog, InfoSheetDialog } from '../components/ConfirmDialog';
+import { GoogleSignInButton } from '../components/GoogleSignInButton';
 import { NavigationShell } from '../components/NavigationShell';
 import { PinDialog } from '../components/PinDialog';
 import { useNotes } from '../context/NotesContext';
+import { formatFullDate } from '../utils/noteHelpers';
 
 export function SettingsScreen() {
   const {
@@ -32,16 +38,26 @@ export function SettingsScreen() {
     notes,
     notifications,
     updateNotifications,
+    authLoading,
+    driveBusy,
+    signInGoogleAccount,
+    backupToGoogleDrive,
+    restoreFromGoogleDrive,
     navigate,
     showToast,
   } = useNotes();
 
   const [notifOpen, setNotifOpen] = useState(false);
   const [backupOpen, setBackupOpen] = useState(false);
+  const [driveBackupConfirmOpen, setDriveBackupConfirmOpen] = useState(false);
+  const [driveRestoreConfirmOpen, setDriveRestoreConfirmOpen] = useState(false);
   const [restoreOpen, setRestoreOpen] = useState(false);
   const [pinDialogOpen, setPinDialogOpen] = useState(false);
   const [pinSheetOpen, setPinSheetOpen] = useState(false);
   const [legalDoc, setLegalDoc] = useState<'privacy' | 'terms' | null>(null);
+  const [avatarError, setAvatarError] = useState(false);
+
+  const isGuest = account.isGuest !== false;
 
   const themeLabel =
     theme === 'system' ? 'System' : theme === 'dark' ? 'Dark' : 'Light';
@@ -50,8 +66,9 @@ export function SettingsScreen() {
       ? ` · ${palette.charAt(0).toUpperCase() + palette.slice(1)}`
       : '';
 
-  const initials = account.name
+  const initials = (account.name || '')
     .split(' ')
+    .filter(Boolean)
     .map((p) => p[0])
     .join('')
     .slice(0, 2)
@@ -109,15 +126,33 @@ export function SettingsScreen() {
             className="flex w-full items-center justify-between gap-3 rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] p-4 text-left hover:border-[var(--accent-primary)]/60 transition-colors cursor-pointer"
           >
             <span className="flex items-center gap-3.5 min-w-0">
-              <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-[var(--accent-soft)] text-sm font-bold text-[var(--accent-primary)]">
-                {initials || <User className="h-5 w-5" />}
-              </span>
+              {!isGuest && account.photoUrl && !avatarError ? (
+                <img
+                  src={account.photoUrl}
+                  alt={account.name}
+                  referrerPolicy="no-referrer"
+                  onError={() => setAvatarError(true)}
+                  className="h-12 w-12 shrink-0 rounded-full object-cover border border-[var(--divider)]"
+                />
+              ) : (
+                <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-[var(--accent-soft)] text-sm font-bold text-[var(--accent-primary)]">
+                  {isGuest ? <User className="h-5 w-5" /> : initials || <User className="h-5 w-5" />}
+                </span>
+              )}
               <span className="min-w-0">
-                <span className="block text-[15px] font-semibold text-[var(--text-primary)] truncate">
-                  {account.name || 'Local Profile'}
+                <span className="flex items-center gap-1.5 min-w-0">
+                  <span className="text-[15px] font-semibold text-[var(--text-primary)] truncate">
+                    {isGuest ? 'Guest Account' : account.name}
+                  </span>
+                  {!isGuest && account.emailVerified && (
+                    <CheckCircle2
+                      className="h-3.5 w-3.5 shrink-0 text-[#2E7D32] dark:text-[#81C995]"
+                      strokeWidth={2.25}
+                    />
+                  )}
                 </span>
                 <span className="block text-xs text-[var(--text-secondary)] truncate">
-                  {account.email || 'Tap to manage account'}
+                  {isGuest ? 'Sign in with Google to back up' : account.email}
                 </span>
               </span>
             </span>
@@ -194,7 +229,7 @@ export function SettingsScreen() {
                 Backup & Sync
               </span>
               <span className="flex items-center gap-1.5 text-xs text-[var(--text-secondary)]">
-                <span>{isPremium ? 'Cloud Preview' : 'Local'}</span>
+                <span>{!isGuest ? 'Google Drive' : 'Local'}</span>
                 <ChevronRight className="h-4 w-4" strokeWidth={1.75} />
               </span>
             </button>
@@ -396,26 +431,49 @@ export function SettingsScreen() {
             </p>
           </div>
 
-          <div className="rounded-2xl bg-[var(--bg-canvas)] border border-[var(--divider)] p-4 flex items-center justify-between gap-3">
+          <div className="rounded-2xl bg-[var(--bg-canvas)] border border-[var(--divider)] p-4 space-y-3">
             <div>
-              <p className="text-sm font-semibold">Auto Cloud Backup</p>
+              <p className="text-sm font-semibold">Google Drive Backup</p>
               <p className="text-xs text-[var(--text-secondary)] mt-0.5">
-                {isPremium
-                  ? 'Ready to sync once a cloud backend is configured.'
-                  : 'Included in Notes Premium.'}
+                {isGuest
+                  ? 'Sign in with Google to save and restore your notes via Google Drive.'
+                  : account.lastDriveBackupAt
+                  ? `Signed in as ${account.email} · Last backup ${formatFullDate(account.lastDriveBackupAt)}`
+                  : `Signed in as ${account.email} · Ready to back up`}
               </p>
             </div>
-            {!isPremium && (
-              <button
-                type="button"
-                onClick={() => {
-                  setBackupOpen(false);
-                  requestUpgrade('Automatic Cloud Backup is included with Notes Premium.');
-                }}
-                className="min-h-[34px] px-3 rounded-full bg-[var(--accent-soft)] text-xs font-semibold text-[var(--accent-primary)] shrink-0 cursor-pointer"
-              >
-                Upgrade
-              </button>
+
+            {isGuest ? (
+              <GoogleSignInButton onClick={signInGoogleAccount} loading={authLoading} />
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                <button
+                  type="button"
+                  disabled={driveBusy}
+                  onClick={() => setDriveBackupConfirmOpen(true)}
+                  className="flex w-full min-h-[42px] items-center justify-center gap-2 rounded-xl bg-[var(--accent-primary)] px-3 text-xs font-semibold text-white dark:text-[#171717] disabled:opacity-60 cursor-pointer"
+                >
+                  {driveBusy ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <CloudUpload className="h-3.5 w-3.5" strokeWidth={2} />
+                  )}
+                  Back Up Now
+                </button>
+                <button
+                  type="button"
+                  disabled={driveBusy}
+                  onClick={() => setDriveRestoreConfirmOpen(true)}
+                  className="flex w-full min-h-[42px] items-center justify-center gap-2 rounded-xl border border-[var(--divider)] bg-[var(--bg-card)] px-3 text-xs font-semibold text-[var(--text-primary)] disabled:opacity-60 cursor-pointer"
+                >
+                  {driveBusy ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <CloudDownload className="h-3.5 w-3.5" strokeWidth={2} />
+                  )}
+                  Restore
+                </button>
+              </div>
             )}
           </div>
 
@@ -429,6 +487,29 @@ export function SettingsScreen() {
           </button>
         </div>
       </InfoSheetDialog>
+
+      <ConfirmDialog
+        open={driveBackupConfirmOpen}
+        title="Back up to Google Drive?"
+        description={`This will save your ${notes.length} notes and ${folders.length} folders to notes-app-backup.json in your Google Drive (${account.email}).`}
+        confirmLabel="Back Up Now"
+        danger={false}
+        onConfirm={() => {
+          void backupToGoogleDrive();
+        }}
+        onClose={() => setDriveBackupConfirmOpen(false)}
+      />
+
+      <ConfirmDialog
+        open={driveRestoreConfirmOpen}
+        title="Restore from Google Drive?"
+        description="This will replace your current local notes and folders with the backup stored in your Google Drive."
+        confirmLabel="Restore Backup"
+        onConfirm={() => {
+          void restoreFromGoogleDrive();
+        }}
+        onClose={() => setDriveRestoreConfirmOpen(false)}
+      />
 
       <InfoSheetDialog
         open={restoreOpen}
