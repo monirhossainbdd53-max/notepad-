@@ -1,18 +1,29 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Check,
   ChevronLeft,
   Cloud,
+  CreditCard,
   Crown,
   FileText,
   FolderOpen,
+  Loader2,
   Lock,
   Palette,
+  RotateCcw,
   Sparkles,
+  Wallet,
 } from 'lucide-react';
 import { InfoSheetDialog } from '../components/ConfirmDialog';
+import { GoogleSignInButton } from '../components/GoogleSignInButton';
 import { NavigationShell } from '../components/NavigationShell';
 import { useNotes } from '../context/NotesContext';
+import {
+  BillingConfig,
+  fetchBillingConfig,
+  startBinancePayCheckout,
+  startSslCommerzCheckout,
+} from '../services/billingService';
 import { FREE_LIMITS } from '../types/notes';
 
 const PREMIUM_FEATURES = [
@@ -43,15 +54,78 @@ const PREMIUM_FEATURES = [
   },
   {
     icon: Cloud,
-    title: 'Auto cloud backup',
-    detail: 'Sync-ready backup alongside JSON export',
+    title: 'Cloud backup & restore',
+    detail: 'Google Drive backup alongside JSON export',
   },
 ];
 
 export function PremiumScreen() {
-  const { isPremium, setIsPremium, activeNotes, folders, goBack } = useNotes();
+  const {
+    account,
+    isPremium,
+    setIsPremium,
+    activeNotes,
+    folders,
+    authLoading,
+    billingBusy,
+    signInGoogleAccount,
+    restorePurchase,
+    showToast,
+    goBack,
+  } = useNotes();
+
   const [plan, setPlan] = useState<'monthly' | 'yearly'>('yearly');
-  const [prototypeModalOpen, setPrototypeModalOpen] = useState(false);
+  const [checkoutOpen, setCheckoutOpen] = useState(false);
+  const [billingConfig, setBillingConfig] = useState<BillingConfig | null>(null);
+  const [receiptEmail, setReceiptEmail] = useState(account.email || '');
+  const [payingProvider, setPayingProvider] = useState<'sslcommerz' | 'binance_pay' | null>(null);
+
+  useEffect(() => {
+    if (account.email) setReceiptEmail(account.email);
+  }, [account.email]);
+
+  useEffect(() => {
+    void fetchBillingConfig().then(setBillingConfig);
+  }, []);
+
+  const bdtPrice =
+    plan === 'yearly'
+      ? billingConfig?.plans.yearly.bdt || '4790.00'
+      : billingConfig?.plans.monthly.bdt || '590.00';
+  const usdtPrice =
+    plan === 'yearly'
+      ? billingConfig?.plans.yearly.usdt || '39.99'
+      : billingConfig?.plans.monthly.usdt || '4.99';
+
+  const handlePay = async (provider: 'sslcommerz' | 'binance_pay') => {
+    const email = (account.email || receiptEmail).trim();
+    if (!email || !email.includes('@')) {
+      showToast('Enter a valid email or sign in with Google first', 'danger');
+      return;
+    }
+
+    setPayingProvider(provider);
+    try {
+      const result =
+        provider === 'sslcommerz'
+          ? await startSslCommerzCheckout({
+              plan,
+              email,
+              name: account.name || 'Notes User',
+            })
+          : await startBinancePayCheckout({
+              plan,
+              email,
+            });
+      window.location.assign(result.checkoutUrl);
+    } catch (err) {
+      showToast(
+        err instanceof Error ? err.message : 'Payment gateway is not configured yet',
+        'danger'
+      );
+      setPayingProvider(null);
+    }
+  };
 
   return (
     <NavigationShell showMobileTabs={false}>
@@ -137,8 +211,11 @@ export function PremiumScreen() {
               </div>
               <p className="mt-2 text-sm font-semibold text-[var(--text-primary)]">Yearly</p>
               <p className="mt-0.5 text-xl font-bold text-[var(--text-primary)] tabular-nums">
-                $39.99
+                ৳4,790
                 <span className="text-xs font-normal text-[var(--text-secondary)]"> / yr</span>
+              </p>
+              <p className="mt-0.5 text-[11px] text-[var(--text-secondary)] tabular-nums">
+                or $39.99 USDT
               </p>
             </button>
 
@@ -167,20 +244,39 @@ export function PremiumScreen() {
               </div>
               <p className="mt-2 text-sm font-semibold text-[var(--text-primary)]">Monthly</p>
               <p className="mt-0.5 text-xl font-bold text-[var(--text-primary)] tabular-nums">
-                $4.99
+                ৳590
                 <span className="text-xs font-normal text-[var(--text-secondary)]"> / mo</span>
+              </p>
+              <p className="mt-0.5 text-[11px] text-[var(--text-secondary)] tabular-nums">
+                or $4.99 USDT
               </p>
             </button>
           </div>
 
           <button
             type="button"
-            onClick={() => setPrototypeModalOpen(true)}
+            onClick={() => setCheckoutOpen(true)}
             className="w-full min-h-[50px] rounded-full bg-[var(--text-primary)] dark:bg-[var(--accent-primary)] text-sm font-semibold text-[var(--bg-card)] dark:text-[#171717] transition-opacity hover:opacity-90 cursor-pointer"
           >
             {isPremium
-              ? 'Premium Preview Active'
-              : `Continue with ${plan === 'yearly' ? 'Yearly ($39.99/yr)' : 'Monthly ($4.99/mo)'}`}
+              ? 'Notes Premium Active'
+              : `Continue with ${plan === 'yearly' ? 'Yearly (৳4,790 / $39.99)' : 'Monthly (৳590 / $4.99)'}`}
+          </button>
+
+          <button
+            type="button"
+            disabled={billingBusy}
+            onClick={() => {
+              void restorePurchase();
+            }}
+            className="flex w-full min-h-[42px] items-center justify-center gap-2 text-xs font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
+          >
+            {billingBusy ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <RotateCcw className="h-3.5 w-3.5" strokeWidth={1.85} />
+            )}
+            Restore Previous Purchase
           </button>
         </div>
 
@@ -192,7 +288,9 @@ export function PremiumScreen() {
             </p>
             <p className="text-xs text-[var(--text-secondary)] tabular-nums truncate">
               {isPremium
-                ? 'All Premium features unlocked'
+                ? account.lastTransactionId
+                  ? `Verified · ${account.lastTransactionId}`
+                  : 'All Premium features unlocked'
                 : `${activeNotes.length}/${FREE_LIMITS.maxActiveNotes} notes · ${folders.length}/${FREE_LIMITS.maxFolders} folders used`}
             </p>
           </div>
@@ -225,20 +323,105 @@ export function PremiumScreen() {
       </section>
 
       <InfoSheetDialog
-        open={prototypeModalOpen}
-        title="Subscription Preview"
-        onClose={() => setPrototypeModalOpen(false)}
+        open={checkoutOpen}
+        title="Choose Payment Method"
+        onClose={() => {
+          if (!payingProvider) setCheckoutOpen(false);
+        }}
       >
-        <div className="space-y-3">
-          <p className="text-sm text-[var(--text-primary)]">
-            Selected plan: <span className="font-semibold capitalize">{plan}</span>
-          </p>
-          <p className="text-sm text-[var(--text-secondary)]">
-            Live billing will be enabled once a payment provider is connected. Switch Preview Mode
-            to Premium at the bottom of the page to test all features immediately.
-          </p>
+        <div className="space-y-4">
+          {!account.email && (
+            <div className="space-y-2.5">
+              <GoogleSignInButton
+                onClick={signInGoogleAccount}
+                loading={authLoading}
+                label="Sign in with Google for receipt"
+              />
+              <input
+                type="email"
+                value={receiptEmail}
+                onChange={(e) => setReceiptEmail(e.target.value)}
+                placeholder="Or enter receipt email address"
+                aria-label="Receipt email address"
+                className="w-full min-h-[44px] rounded-xl bg-[var(--bg-canvas)] border border-[var(--divider)] px-3.5 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-primary)]"
+              />
+            </div>
+          )}
+
+          <button
+            type="button"
+            disabled={Boolean(payingProvider)}
+            onClick={() => {
+              void handlePay('sslcommerz');
+            }}
+            className="flex w-full items-center justify-between gap-3 rounded-2xl border border-[var(--divider)] bg-[var(--bg-canvas)] p-4 text-left hover:border-[var(--accent-primary)] transition-colors disabled:opacity-60 cursor-pointer"
+          >
+            <span className="flex items-center gap-3 min-w-0">
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[var(--accent-soft)] text-[var(--accent-primary)]">
+                {payingProvider === 'sslcommerz' ? (
+                  <Loader2 className="h-5 w-5 animate-spin" />
+                ) : (
+                  <CreditCard className="h-5 w-5" strokeWidth={1.85} />
+                )}
+              </span>
+              <span className="min-w-0">
+                <span className="block text-sm font-semibold text-[var(--text-primary)]">
+                  BD Debit Card · bKash · Nagad
+                </span>
+                <span className="block text-xs text-[var(--text-secondary)]">
+                  SSLCommerz · ৳{Math.round(Number(bdtPrice)).toLocaleString()} BDT
+                </span>
+              </span>
+            </span>
+            <span className="shrink-0 rounded-full bg-[var(--bg-card)] border border-[var(--divider)] px-2.5 py-1 text-[11px] font-medium text-[var(--text-secondary)]">
+              {billingConfig?.sslcommerzEnabled
+                ? billingConfig.sslcommerzMode === 'live'
+                  ? 'Live'
+                  : 'Sandbox'
+                : 'Setup needed'}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            disabled={Boolean(payingProvider)}
+            onClick={() => {
+              void handlePay('binance_pay');
+            }}
+            className="flex w-full items-center justify-between gap-3 rounded-2xl border border-[var(--divider)] bg-[var(--bg-canvas)] p-4 text-left hover:border-[var(--accent-primary)] transition-colors disabled:opacity-60 cursor-pointer"
+          >
+            <span className="flex items-center gap-3 min-w-0">
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[var(--accent-soft)] text-[var(--accent-primary)]">
+                {payingProvider === 'binance_pay' ? (
+                  <Loader2 className="h-5 w-5 animate-spin" />
+                ) : (
+                  <Wallet className="h-5 w-5" strokeWidth={1.85} />
+                )}
+              </span>
+              <span className="min-w-0">
+                <span className="block text-sm font-semibold text-[var(--text-primary)]">
+                  Binance Pay (USDT)
+                </span>
+                <span className="block text-xs text-[var(--text-secondary)]">
+                  Crypto Wallet · ${usdtPrice} USDT
+                </span>
+              </span>
+            </span>
+            <span className="shrink-0 rounded-full bg-[var(--bg-card)] border border-[var(--divider)] px-2.5 py-1 text-[11px] font-medium text-[var(--text-secondary)]">
+              {billingConfig?.binancePayEnabled ? 'Live' : 'Setup needed'}
+            </span>
+          </button>
+
+          {(!billingConfig?.sslcommerzEnabled || !billingConfig?.binancePayEnabled) && (
+            <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
+              Gateways marked <span className="font-medium text-[var(--text-primary)]">Setup needed</span>{' '}
+              require merchant API credentials in server environment secrets before live or sandbox
+              checkout can proceed.
+            </p>
+          )}
         </div>
       </InfoSheetDialog>
     </NavigationShell>
   );
 }
+

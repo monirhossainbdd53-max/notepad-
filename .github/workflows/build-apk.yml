@@ -45,6 +45,8 @@ jobs:
         run: npm install --legacy-peer-deps
 
       - name: Build web app
+        env:
+          VITE_APP_VERSION: 1.0.${{ github.run_number }}
         run: npm run build
 
       - name: Add Android platform
@@ -56,19 +58,69 @@ jobs:
           SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
           echo "sdk.dir=$SDK_ROOT" > android/local.properties
 
-      - name: Ensure Android permissions
+      - name: Configure Android permissions & Google SocialLogin
         run: |
           node -e '
             const fs = require("fs");
-            const p = "android/app/src/main/AndroidManifest.xml";
-            let xml = fs.readFileSync(p, "utf8");
-            for (const perm of ["android.permission.CAMERA", "android.permission.RECORD_AUDIO"]) {
+            const manifestPath = "android/app/src/main/AndroidManifest.xml";
+            let xml = fs.readFileSync(manifestPath, "utf8");
+            for (const perm of ["android.permission.CAMERA", "android.permission.RECORD_AUDIO", "android.permission.POST_NOTIFICATIONS"]) {
               if (!xml.includes(perm)) {
                 xml = xml.replace("</manifest>", `    <uses-permission android:name="${perm}" />\n</manifest>`);
               }
             }
-            fs.writeFileSync(p, xml);
+            fs.writeFileSync(manifestPath, xml);
+
+            const gradlePropsPath = "android/gradle.properties";
+            let props = fs.existsSync(gradlePropsPath) ? fs.readFileSync(gradlePropsPath, "utf8") : "";
+            for (const line of [
+              "socialLogin.facebook.include=false",
+              "socialLogin.apple.include=false",
+              "socialLogin.twitter.include=false"
+            ]) {
+              if (!props.includes(line)) {
+                props += `\n${line}\n`;
+              }
+            }
+            fs.writeFileSync(gradlePropsPath, props);
           '
+          mkdir -p android/app/src/main/java/com/riyad/notes
+          cat <<'EOF' > android/app/src/main/java/com/riyad/notes/MainActivity.java
+          package com.riyad.notes;
+
+          import android.content.Intent;
+          import android.util.Log;
+          import com.getcapacitor.BridgeActivity;
+          import com.getcapacitor.Plugin;
+          import com.getcapacitor.PluginHandle;
+          import ee.forgr.capacitor.social.login.GoogleProvider;
+          import ee.forgr.capacitor.social.login.ModifiedMainActivityForSocialLoginPlugin;
+          import ee.forgr.capacitor.social.login.SocialLoginPlugin;
+
+          public class MainActivity extends BridgeActivity implements ModifiedMainActivityForSocialLoginPlugin {
+
+              @Override
+              protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+                  super.onActivityResult(requestCode, resultCode, data);
+                  if (requestCode >= GoogleProvider.REQUEST_AUTHORIZE_GOOGLE_MIN && requestCode < GoogleProvider.REQUEST_AUTHORIZE_GOOGLE_MAX) {
+                      PluginHandle pluginHandle = getBridge().getPlugin("SocialLogin");
+                      if (pluginHandle == null) {
+                          Log.i("Google Activity Result", "SocialLogin handle is null");
+                          return;
+                      }
+                      Plugin plugin = pluginHandle.getInstance();
+                      if (!(plugin instanceof SocialLoginPlugin)) {
+                          Log.i("Google Activity Result", "SocialLogin plugin instance is not SocialLoginPlugin");
+                          return;
+                      }
+                      ((SocialLoginPlugin) plugin).handleGoogleLoginIntent(requestCode, data);
+                  }
+              }
+
+              @Override
+              public void IHaveModifiedTheMainActivityForTheUseWithSocialLoginPlugin() {}
+          }
+          EOF
 
       - name: Apply Android launcher icon
         run: |
@@ -102,6 +154,22 @@ jobs:
       - name: Sync Capacitor Android
         run: npx cap sync android
 
+      - name: Bump Android versionCode & versionName
+        run: |
+          node -e '
+            const fs = require("fs");
+            const p = "android/app/build.gradle";
+            let gradle = fs.readFileSync(p, "utf8");
+            const runNum = Number(process.env.GITHUB_RUN_NUMBER || "1");
+            const versionCode = 10 + runNum;
+            const versionName = `1.0.${runNum}`;
+            gradle = gradle
+              .replace(/versionCode\s+\d+/, `versionCode ${versionCode}`)
+              .replace(/versionName\s+"[^"]+"/, `versionName "${versionName}"`);
+            fs.writeFileSync(p, gradle);
+            console.log(`Android build version updated -> versionCode=${versionCode}, versionName=${versionName}`);
+          '
+
       - name: Build & Sign Release APK
         env:
           KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
@@ -131,11 +199,13 @@ jobs:
 
           KEYSTORE_FILE="/tmp/notes-release.keystore"
           if [ -n "$KEYSTORE_B64" ]; then
+            echo "Using permanent keystore from GitHub Secrets."
             echo "$KEYSTORE_B64" | base64 --decode > "$KEYSTORE_FILE"
             ALIAS="${KEY_ALIAS:-notes_release}"
             SPASS="${KEYSTORE_PASS:-NotesRelease2026}"
             KPASS="${KEY_PASS:-$SPASS}"
           else
+            echo "::warning::ANDROID_KEYSTORE_BASE64 secret is not set. Using a temporary keystore; add permanent keystore secrets to support in-place APK updates and fixed SHA-1."
             ALIAS="notes_release"
             SPASS="NotesRelease2026"
             KPASS="NotesRelease2026"
@@ -151,6 +221,9 @@ jobs:
               -dname "CN=Riyad Islam, OU=Mobile, O=Notes, L=Dhaka, S=Dhaka, C=BD"
           fi
 
+          echo "=== Signing Certificate Fingerprints (for Firebase / Google Cloud Android OAuth) ==="
+          keytool -list -v -keystore "$KEYSTORE_FILE" -alias "$ALIAS" -storepass "$SPASS" | grep -E "SHA1:|SHA256:" || true
+
           mkdir -p release-apk
           "$ZIPALIGN" -p -f 4 "$UNSIGNED_APK" /tmp/app-release-aligned.apk
           "$APKSIGNER" sign \
@@ -164,19 +237,21 @@ jobs:
             --out release-apk/Notes.apk \
             /tmp/app-release-aligned.apk
 
-          "$APKSIGNER" verify --verbose release-apk/Notes.apk
+          "$APKSIGNER" verify --verbose --print-certs release-apk/Notes.apk
           rm -f "$KEYSTORE_FILE" /tmp/app-release-aligned.apk
 
       - name: Publish Notes.apk to GitHub Releases
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAG="v1.0.0"
+          APP_VERSION="1.0.${{ github.run_number }}"
+          TAG="v${APP_VERSION}"
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" release-apk/Notes.apk --clobber
           else
             gh release create "$TAG" release-apk/Notes.apk \
-              --title "Notes v1.0.0" \
-              --notes "Signed Android Release APK (Notes.apk)" \
+              --title "Notes ${TAG}" \
+              --notes "Signed Android Release APK (Notes.apk) — Version ${APP_VERSION} (Build $((10 + ${{ github.run_number }})))" \
+              --latest \
               --target "${{ github.sha }}"
           fi

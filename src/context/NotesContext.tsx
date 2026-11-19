@@ -27,6 +27,11 @@ import {
   signOutGoogle,
   uploadDriveBackup,
 } from '../services/googleAuthDrive';
+import { syncLocalNotifications } from '../utils/notificationHelper';
+import {
+  restorePurchaseOnServer,
+  verifyPurchaseTransaction,
+} from '../services/billingService';
 
 const STORAGE_KEY = 'notes_app_state_v2';
 
@@ -96,11 +101,13 @@ interface NotesContextValue {
   updateAccount: (patch: Partial<UserAccount>) => void;
   authLoading: boolean;
   driveBusy: boolean;
+  billingBusy: boolean;
   hasDriveAccess: boolean;
   signInGoogleAccount: () => Promise<void>;
   signOutGoogleAccount: () => Promise<void>;
   backupToGoogleDrive: () => Promise<boolean>;
   restoreFromGoogleDrive: () => Promise<boolean>;
+  restorePurchase: (transactionId?: string) => Promise<{ restored: boolean; message: string }>;
   recentSearches: string[];
   addRecentSearch: (query: string) => void;
   clearRecentSearches: () => void;
@@ -229,6 +236,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   const [hasOnboarded, setHasOnboarded] = useState<boolean>(initial.hasOnboarded);
   const [authLoading, setAuthLoading] = useState(false);
   const [driveBusy, setDriveBusy] = useState(false);
+  const [billingBusy, setBillingBusy] = useState(false);
   const [hasDriveAccess, setHasDriveAccess] = useState(false);
 
   const [history, setHistory] = useState<HistoryEntry[]>([
@@ -344,6 +352,10 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
+    void syncLocalNotifications(initial.notifications, false);
+  }, [initial.notifications]);
+
+  useEffect(() => {
     if (!toast) return;
     const duration = toast.undoAction ? 4000 : 2600;
     const timer = window.setTimeout(() => setToast(null), duration);
@@ -358,6 +370,55 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   );
 
   const dismissToast = useCallback(() => setToast(null), []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    const status = params.get('billing_status');
+    const tranId = params.get('tran_id');
+    if (!status) return;
+
+    const cleanUrl = () => {
+      try {
+        window.history.replaceState({}, '', window.location.pathname);
+      } catch {
+        // Ignore history errors
+      }
+    };
+
+    if ((status === 'success' || status === 'verify_binance') && tranId) {
+      setBillingBusy(true);
+      void verifyPurchaseTransaction(tranId)
+        .then((res) => {
+          if (res.verified && res.purchase) {
+            setIsPremiumState(true);
+            setAccount((prev) => ({
+              ...prev,
+              lastTransactionId: res.purchase?.tranId,
+              premiumExpiresAt: res.purchase?.expiresAt,
+            }));
+            showToast('Notes Premium activated!');
+          } else {
+            showToast(res.error || 'Payment could not be verified yet', 'danger');
+          }
+        })
+        .catch(() => {
+          showToast('Could not verify payment right now', 'danger');
+        })
+        .finally(() => {
+          setBillingBusy(false);
+          cleanUrl();
+        });
+      return;
+    }
+
+    if (status === 'cancelled') {
+      showToast('Payment cancelled');
+    } else if (status === 'failed') {
+      showToast('Payment failed', 'danger');
+    }
+    cleanUrl();
+  }, [showToast]);
 
   const signInGoogleAccount = useCallback(async () => {
     setAuthLoading(true);
@@ -375,11 +436,13 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       }));
       showToast(`Signed in as ${user.displayName || user.email || 'Google User'}`);
     } catch (err) {
-      const msg =
-        err instanceof Error && err.message.includes('popup-closed')
-          ? 'Sign-in cancelled'
-          : 'Could not sign in with Google';
-      showToast(msg, 'danger');
+      const errObj = err as { code?: string; message?: string };
+      const rawMsg = (errObj?.message || '').toLowerCase();
+      const isCancelled =
+        errObj?.code === 'USER_CANCELLED' ||
+        rawMsg.includes('popup-closed') ||
+        rawMsg.includes('cancel');
+      showToast(isCancelled ? 'Sign-in cancelled' : 'Could not sign in with Google', 'danger');
     } finally {
       setAuthLoading(false);
     }
@@ -441,6 +504,40 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       setDriveBusy(false);
     }
   }, [showToast]);
+
+  const restorePurchase = useCallback(
+    async (transactionId?: string): Promise<{ restored: boolean; message: string }> => {
+      setBillingBusy(true);
+      try {
+        const result = await restorePurchaseOnServer({
+          email: account.email || undefined,
+          transactionId: transactionId?.trim() || account.lastTransactionId || undefined,
+        });
+        if (result.restored && result.purchase) {
+          setIsPremiumState(true);
+          setAccount((prev) => ({
+            ...prev,
+            lastTransactionId: result.purchase?.tranId,
+            premiumExpiresAt: result.purchase?.expiresAt,
+          }));
+          const msg = 'Premium subscription restored';
+          showToast(msg);
+          return { restored: true, message: msg };
+        }
+        const msg = result.message || 'No active verified purchase found.';
+        showToast(msg);
+        return { restored: false, message: msg };
+      } catch (err) {
+        const msg =
+          err instanceof Error ? err.message : 'Unable to reach billing verification server';
+        showToast(msg, 'danger');
+        return { restored: false, message: msg };
+      } finally {
+        setBillingBusy(false);
+      }
+    },
+    [account.email, account.lastTransactionId, showToast]
+  );
 
   const requestUpgrade = useCallback((reason: string) => {
     setUpgradePromptReason(reason);
@@ -688,9 +785,45 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     [showToast]
   );
 
-  const updateNotifications = useCallback((patch: Partial<NotificationSettings>) => {
-    setNotifications((prev) => ({ ...prev, ...patch }));
-  }, []);
+  const updateNotifications = useCallback(
+    (patch: Partial<NotificationSettings>) => {
+      const next = { ...notifications, ...patch };
+      setNotifications(next);
+
+      const turningOnSchedule = patch.dailyReminder === true || patch.weeklyDigest === true;
+      void syncLocalNotifications(next, turningOnSchedule).then(({ permissionGranted }) => {
+        if (turningOnSchedule && !permissionGranted) {
+          setNotifications((prev) => ({
+            ...prev,
+            ...(patch.dailyReminder === true ? { dailyReminder: false } : {}),
+            ...(patch.weeklyDigest === true ? { weeklyDigest: false } : {}),
+          }));
+          showToast('Notification permission is required', 'danger');
+          return;
+        }
+
+        if (patch.dailyReminder === true) {
+          showToast('Daily reminder scheduled for 8:00 PM');
+        } else if (patch.dailyReminder === false) {
+          showToast('Daily reminder turned off');
+        } else if (patch.weeklyDigest === true) {
+          showToast('Weekly recap reminder enabled');
+        } else if (patch.weeklyDigest === false) {
+          showToast('Weekly recap reminder turned off');
+        } else if (patch.subtleSounds === true) {
+          if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+            try {
+              navigator.vibrate(12);
+            } catch {
+              // Ignore vibration errors
+            }
+          }
+          showToast('Subtle haptic feedback enabled');
+        }
+      });
+    },
+    [notifications, showToast]
+  );
 
   const updateAccount = useCallback(
     (patch: Partial<UserAccount>) => {
@@ -1057,11 +1190,13 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     updateAccount,
     authLoading,
     driveBusy,
+    billingBusy,
     hasDriveAccess,
     signInGoogleAccount,
     signOutGoogleAccount,
     backupToGoogleDrive,
     restoreFromGoogleDrive,
+    restorePurchase,
     recentSearches,
     addRecentSearch,
     clearRecentSearches,

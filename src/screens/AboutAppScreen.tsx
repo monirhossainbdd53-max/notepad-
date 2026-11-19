@@ -165,7 +165,9 @@ export function AboutAppScreen() {
           />
           <h2 className="mt-2.5 text-xl font-bold text-[var(--text-primary)]">Notes</h2>
           <p className="mt-0.5 text-sm text-[var(--text-secondary)]">Capture your thoughts</p>
-          <p className="mt-1.5 text-xs text-[var(--text-secondary)] tabular-nums">Version 1.0.0</p>
+          <p className="mt-1.5 text-xs text-[var(--text-secondary)] tabular-nums">
+            Version {import.meta.env.VITE_APP_VERSION || '1.0.0'}
+          </p>
 
           <div className="mt-3 flex items-center justify-center gap-2 flex-wrap">
             {SOCIAL_LINKS.map((item) => (

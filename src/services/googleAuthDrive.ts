@@ -1,8 +1,11 @@
+import { Capacitor } from '@capacitor/core';
+import { SocialLogin } from '@capgo/capacitor-social-login';
 import { getApps, initializeApp } from 'firebase/app';
 import {
   getAuth,
   GoogleAuthProvider,
   onAuthStateChanged,
+  signInWithCredential,
   signInWithPopup,
   signOut,
   User,
@@ -21,8 +24,28 @@ SCOPES.forEach((scope) => provider.addScope(scope));
 provider.setCustomParameters({ prompt: 'select_account' });
 
 let isSigningIn = false;
+let nativeInitialized = false;
 // Keep OAuth access token strictly in memory (never in localStorage/sessionStorage)
 let cachedAccessToken: string | null = null;
+
+function isNativeApp(): boolean {
+  try {
+    return Capacitor.isNativePlatform();
+  } catch {
+    return false;
+  }
+}
+
+async function ensureNativeSocialLoginInitialized(): Promise<void> {
+  if (nativeInitialized) return;
+  await SocialLogin.initialize({
+    google: {
+      webClientId: firebaseConfig.oAuthClientId,
+      mode: 'online',
+    },
+  });
+  nativeInitialized = true;
+}
 
 export interface DriveBackupPayload {
   version: number;
@@ -47,9 +70,45 @@ export function initFirebaseAuth(
   });
 }
 
-export async function signInWithGoogle(): Promise<{ user: User; accessToken: string }> {
+export async function signInWithGoogle(
+  forceRefreshToken = false
+): Promise<{ user: User; accessToken: string }> {
   try {
     isSigningIn = true;
+
+    if (isNativeApp()) {
+      await ensureNativeSocialLoginInitialized();
+      const loginRes = await SocialLogin.login({
+        provider: 'google',
+        options: {
+          scopes: SCOPES,
+          style: 'standard',
+          forceRefreshToken,
+        },
+      });
+
+      if (loginRes.result.responseType !== 'online') {
+        throw new Error('Unexpected offline login response');
+      }
+
+      const idToken = loginRes.result.idToken;
+      const accessToken = loginRes.result.accessToken?.token;
+
+      if (!idToken) {
+        throw new Error('Could not obtain Google ID token');
+      }
+
+      const credential = GoogleAuthProvider.credential(idToken);
+      const userCred = await signInWithCredential(auth, credential);
+
+      if (!accessToken) {
+        throw new Error('Could not obtain Google Drive access token');
+      }
+
+      cachedAccessToken = accessToken;
+      return { user: userCred.user, accessToken: cachedAccessToken };
+    }
+
     const result = await signInWithPopup(auth, provider);
     const credential = GoogleAuthProvider.credentialFromResult(result);
     if (!credential?.accessToken) {
@@ -64,6 +123,14 @@ export async function signInWithGoogle(): Promise<{ user: User; accessToken: str
 
 export async function signOutGoogle(): Promise<void> {
   cachedAccessToken = null;
+  if (isNativeApp()) {
+    try {
+      await ensureNativeSocialLoginInitialized();
+      await SocialLogin.logout({ provider: 'google' });
+    } catch {
+      // Ignore native logout cleanup errors
+    }
+  }
   await signOut(auth);
 }
 
@@ -71,9 +138,9 @@ export function hasCachedDriveToken(): boolean {
   return Boolean(cachedAccessToken);
 }
 
-export async function ensureDriveAccessToken(): Promise<string> {
-  if (cachedAccessToken) return cachedAccessToken;
-  const { accessToken } = await signInWithGoogle();
+export async function ensureDriveAccessToken(forceRefresh = false): Promise<string> {
+  if (!forceRefresh && cachedAccessToken) return cachedAccessToken;
+  const { accessToken } = await signInWithGoogle(forceRefresh);
   return accessToken;
 }
 
@@ -124,7 +191,7 @@ export async function uploadDriveBackup(payload: DriveBackupPayload): Promise<{
     existing = await findDriveBackupFile(token);
   } catch (err) {
     if (err instanceof Error && err.message === 'AUTH_EXPIRED') {
-      token = await ensureDriveAccessToken();
+      token = await ensureDriveAccessToken(true);
       existing = await findDriveBackupFile(token);
     } else {
       throw err;
@@ -184,7 +251,7 @@ export async function restoreDriveBackup(): Promise<DriveBackupPayload> {
     file = await findDriveBackupFile(token);
   } catch (err) {
     if (err instanceof Error && err.message === 'AUTH_EXPIRED') {
-      token = await ensureDriveAccessToken();
+      token = await ensureDriveAccessToken(true);
       file = await findDriveBackupFile(token);
     } else {
       throw err;

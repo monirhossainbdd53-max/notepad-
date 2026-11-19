@@ -71,6 +71,8 @@ export interface UserAccount {
   emailVerified?: boolean;
   isGuest?: boolean;
   lastDriveBackupAt?: string;
+  lastTransactionId?: string;
+  premiumExpiresAt?: string;
 }
 
 export interface ToastMessage {

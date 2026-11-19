@@ -40,9 +40,11 @@ export function SettingsScreen() {
     updateNotifications,
     authLoading,
     driveBusy,
+    billingBusy,
     signInGoogleAccount,
     backupToGoogleDrive,
     restoreFromGoogleDrive,
+    restorePurchase,
     navigate,
     showToast,
   } = useNotes();
@@ -52,6 +54,8 @@ export function SettingsScreen() {
   const [driveBackupConfirmOpen, setDriveBackupConfirmOpen] = useState(false);
   const [driveRestoreConfirmOpen, setDriveRestoreConfirmOpen] = useState(false);
   const [restoreOpen, setRestoreOpen] = useState(false);
+  const [restoreTxId, setRestoreTxId] = useState('');
+  const [restoreStatusMsg, setRestoreStatusMsg] = useState<string | null>(null);
   const [pinDialogOpen, setPinDialogOpen] = useState(false);
   const [pinSheetOpen, setPinSheetOpen] = useState(false);
   const [legalDoc, setLegalDoc] = useState<'privacy' | 'terms' | null>(null);
@@ -514,12 +518,48 @@ export function SettingsScreen() {
       <InfoSheetDialog
         open={restoreOpen}
         title="Restore Purchase"
-        onClose={() => setRestoreOpen(false)}
+        onClose={() => {
+          setRestoreOpen(false);
+          setRestoreStatusMsg(null);
+        }}
       >
-        <p className="text-sm text-[var(--text-secondary)]">
-          No active payment provider is connected yet. Once billing is configured, previously
-          purchased subscriptions can be restored here.
-        </p>
+        <div className="space-y-4">
+          <p className="text-sm text-[var(--text-secondary)]">
+            {account.email
+              ? `Verify purchases linked to ${account.email} or enter a verified SSLCommerz / Binance Pay transaction ID.`
+              : 'Enter your payment Transaction ID or sign in with Google to restore an active subscription.'}
+          </p>
+
+          <input
+            type="text"
+            value={restoreTxId}
+            onChange={(e) => setRestoreTxId(e.target.value)}
+            placeholder="Transaction ID (optional)"
+            aria-label="Transaction ID"
+            className="w-full min-h-[44px] rounded-xl bg-[var(--bg-canvas)] border border-[var(--divider)] px-3.5 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-primary)]"
+          />
+
+          {restoreStatusMsg && (
+            <p className="text-xs text-[var(--text-secondary)]">{restoreStatusMsg}</p>
+          )}
+
+          <button
+            type="button"
+            disabled={billingBusy}
+            onClick={() => {
+              void restorePurchase(restoreTxId).then((res) => {
+                setRestoreStatusMsg(res.message);
+                if (res.restored) {
+                  setRestoreOpen(false);
+                }
+              });
+            }}
+            className="flex w-full min-h-[46px] items-center justify-center gap-2 rounded-xl bg-[var(--text-primary)] dark:bg-[var(--accent-primary)] text-sm font-semibold text-[var(--bg-card)] dark:text-[#171717] disabled:opacity-60 cursor-pointer"
+          >
+            {billingBusy && <Loader2 className="h-4 w-4 animate-spin" />}
+            Verify & Restore Purchase
+          </button>
+        </div>
       </InfoSheetDialog>
 
       <InfoSheetDialog
@@ -530,20 +570,35 @@ export function SettingsScreen() {
         {legalDoc === 'privacy' ? (
           <div className="space-y-3 text-sm text-[var(--text-secondary)]">
             <p>
-              Notes stores your notes, folders, and preferences locally in your browser storage.
-              No note content is transmitted to external servers in this standalone frontend build.
+              Notes stores your notes, folders, and preferences locally on your device. If you
+              continue in Guest mode, nothing leaves your device unless you choose to translate a
+              selected text snippet.
             </p>
-            <p>You can export or clear your local workspace data anytime from Settings.</p>
+            <p>
+              If you sign in with Google, your display name, verified email, and profile photo are
+              used only for your account profile, and Google Drive backups are saved exclusively to
+              your own Drive file (<span className="font-medium text-[var(--text-primary)]">notes-app-backup.json</span>)
+              only when you confirm a backup or restore action.
+            </p>
+            <p>
+              Voice typing uses your device or browser speech recognition engine. You can sign out,
+              export, or clear your local workspace data anytime from Settings or Account.
+            </p>
           </div>
         ) : (
           <div className="space-y-3 text-sm text-[var(--text-secondary)]">
             <p>
-              Notes is provided as a calm personal writing and organization workspace. You retain
-              full ownership of all content you create inside the application.
+              Notes is a personal writing and organization workspace. You retain full ownership and
+              control of all notes, sketches, images, and folders you create inside the app.
             </p>
             <p>
-              Optional cloud sync and subscription billing are presented as interface previews
-              until external services are connected.
+              Google Sign-In and Google Drive backup are optional features for personal cloud
+              backup. Translation relies on third-party translation endpoints only for the text you
+              explicitly select to translate.
+            </p>
+            <p>
+              Subscription billing and purchase restoration will connect to the configured payment
+              provider once enabled.
             </p>
           </div>
         )}
