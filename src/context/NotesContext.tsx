@@ -128,6 +128,8 @@ interface NotesContextValue {
     next: Pick<PreviewModeConfig, 'enabled' | 'days' | 'hours' | 'minutes' | 'seconds'>
   ) => Promise<boolean>;
   aboutConfig: AboutAppConfig;
+  aboutSyncState: FirestoreSyncState;
+  aboutSyncError: string | null;
   aboutSaving: boolean;
   updateAdminAboutConfig: (
     next: Pick<AboutAppConfig, 'ceo' | 'team' | 'socials'>
@@ -358,6 +360,8 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   const [previewSyncState, setPreviewSyncState] = useState<FirestoreSyncState>('loading');
   const [previewSyncError, setPreviewSyncError] = useState<string | null>(null);
   const [aboutConfig, setAboutConfig] = useState<AboutAppConfig>(() => loadCachedAboutConfig());
+  const [aboutSyncState, setAboutSyncState] = useState<FirestoreSyncState>('loading');
+  const [aboutSyncError, setAboutSyncError] = useState<string | null>(null);
   const [aboutSaving, setAboutSaving] = useState(false);
   const [nowMs, setNowMs] = useState<number>(() => Date.now());
   const [adminSaving, setAdminSaving] = useState(false);
@@ -484,8 +488,10 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
-    const unsubscribe = subscribeAboutAppConfig((config) => {
+    const unsubscribe = subscribeAboutAppConfig((config, syncState, errMsg) => {
       setAboutConfig(config);
+      setAboutSyncState(syncState);
+      setAboutSyncError(errMsg || null);
     });
     return () => unsubscribe();
   }, []);
@@ -1117,13 +1123,14 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       try {
         const saved = await saveAboutAppConfig(next);
         setAboutConfig(saved);
+        setAboutSyncState('synced');
+        setAboutSyncError(null);
         showToast('About App updated');
         return true;
       } catch (err) {
-        showToast(
-          err instanceof Error ? err.message : 'Could not save About App settings',
-          'danger'
-        );
+        const msg = err instanceof Error ? err.message : 'Could not save About App settings';
+        setAboutSyncError(msg);
+        showToast(msg, 'danger');
         return false;
       } finally {
         setAboutSaving(false);
@@ -1579,6 +1586,8 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     adminSaving,
     updateAdminPreviewConfig,
     aboutConfig,
+    aboutSyncState,
+    aboutSyncError,
     aboutSaving,
     updateAdminAboutConfig,
     canCreateNote,

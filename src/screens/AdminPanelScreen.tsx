@@ -52,6 +52,7 @@ export function AdminPanelScreen() {
     adminSaving,
     updateAdminPreviewConfig,
     aboutConfig,
+    aboutSyncError,
     aboutSaving,
     updateAdminAboutConfig,
     goBack,
@@ -77,6 +78,8 @@ export function AdminPanelScreen() {
   const [supportFilter, setSupportFilter] = useState<SupportFilter>('all');
   const [replyDrafts, setReplyDrafts] = useState<Record<string, string>>({});
   const [replyingId, setReplyingId] = useState<string | null>(null);
+  const [aboutJustSaved, setAboutJustSaved] = useState(false);
+  const [previewJustSaved, setPreviewJustSaved] = useState(false);
 
   useEffect(() => {
     setEnabled(previewConfig.enabled);
@@ -174,13 +177,18 @@ export function AdminPanelScreen() {
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    await updateAdminPreviewConfig({
+    setPreviewJustSaved(false);
+    const ok = await updateAdminPreviewConfig({
       enabled,
       days: parseField(days, 3650),
       hours: parseField(hours, 23),
       minutes: parseField(minutes, 59),
       seconds: parseField(seconds, 59),
     });
+    if (ok) {
+      setPreviewJustSaved(true);
+      setTimeout(() => setPreviewJustSaved(false), 4000);
+    }
   };
 
   const handleSendReply = async (ticket: SupportMessage) => {
@@ -273,11 +281,16 @@ export function AdminPanelScreen() {
 
   const handleSaveAboutApp = async (e: React.FormEvent) => {
     e.preventDefault();
-    await updateAdminAboutConfig({
+    setAboutJustSaved(false);
+    const ok = await updateAdminAboutConfig({
       ceo: ceoDraft,
       team: teamDraft,
       socials: socialsDraft,
     });
+    if (ok) {
+      setAboutJustSaved(true);
+      setTimeout(() => setAboutJustSaved(false), 4000);
+    }
   };
 
   const headerTitle =
@@ -707,7 +720,8 @@ export function AdminPanelScreen() {
                             </div>
                           </div>
                           <input
-                            type="url"
+                            type="text"
+                            inputMode="url"
                             value={item.href}
                             onChange={(e) => {
                               const val = e.target.value;
@@ -818,7 +832,8 @@ export function AdminPanelScreen() {
                     </div>
 
                     <input
-                      type="url"
+                      type="text"
+                      inputMode="url"
                       value={ceoDraft.image.startsWith('data:') ? '' : ceoDraft.image}
                       onChange={(e) =>
                         setCeoDraft((prev) =>
@@ -956,7 +971,8 @@ export function AdminPanelScreen() {
                         </div>
 
                         <input
-                          type="url"
+                          type="text"
+                          inputMode="url"
                           value={member.image.startsWith('data:') ? '' : member.image}
                           onChange={(e) => {
                             const val = e.target.value;
@@ -974,13 +990,37 @@ export function AdminPanelScreen() {
                 )}
               </div>
 
+              {aboutSyncError && (
+                <div className="rounded-2xl bg-[#E45B5B]/10 border border-[#E45B5B]/30 p-4 text-xs text-[#E45B5B]">
+                  {aboutSyncError}
+                </div>
+              )}
+
+              {aboutJustSaved && !aboutSyncError && (
+                <div className="flex items-center gap-2 rounded-2xl bg-[#2E7D32]/12 border border-[#2E7D32]/30 p-3.5 text-xs font-semibold text-[#2E7D32] dark:text-[#81C995]">
+                  <CheckCircle2 className="h-4 w-4 shrink-0" />
+                  Saved — About App updated in real time
+                </div>
+              )}
+
               <button
                 type="submit"
                 disabled={aboutSaving}
                 className="flex w-full min-h-[48px] items-center justify-center gap-2 rounded-xl bg-[var(--text-primary)] dark:bg-[var(--accent-primary)] text-sm font-semibold text-[var(--bg-card)] dark:text-[#171717] disabled:opacity-60 transition-opacity hover:opacity-90 cursor-pointer"
               >
-                {aboutSaving && <Loader2 className="h-4 w-4 animate-spin" />}
-                Save About App
+                {aboutSaving ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Saving...
+                  </>
+                ) : aboutJustSaved ? (
+                  <>
+                    <CheckCircle2 className="h-4 w-4" />
+                    Saved
+                  </>
+                ) : (
+                  'Save About App'
+                )}
               </button>
             </form>
           ) : (
@@ -1063,13 +1103,31 @@ export function AdminPanelScreen() {
                   <p className="text-xs text-[#E45B5B]">{previewSyncError}</p>
                 )}
 
+                {previewJustSaved && !previewSyncError && (
+                  <div className="flex items-center gap-2 rounded-xl bg-[#2E7D32]/12 border border-[#2E7D32]/30 p-3 text-xs font-semibold text-[#2E7D32] dark:text-[#81C995]">
+                    <CheckCircle2 className="h-4 w-4 shrink-0" />
+                    Saved — Preview Timer updated
+                  </div>
+                )}
+
                 <button
                   type="submit"
                   disabled={adminSaving}
                   className="flex w-full min-h-[48px] items-center justify-center gap-2 rounded-xl bg-[var(--text-primary)] dark:bg-[var(--accent-primary)] text-sm font-semibold text-[var(--bg-card)] dark:text-[#171717] disabled:opacity-60 transition-opacity hover:opacity-90 cursor-pointer"
                 >
-                  {adminSaving && <Loader2 className="h-4 w-4 animate-spin" />}
-                  Save Preview Timer
+                  {adminSaving ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Saving...
+                    </>
+                  ) : previewJustSaved ? (
+                    <>
+                      <CheckCircle2 className="h-4 w-4" />
+                      Saved
+                    </>
+                  ) : (
+                    'Save Preview Timer'
+                  )}
                 </button>
               </div>
             </form>

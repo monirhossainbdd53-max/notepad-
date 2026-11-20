@@ -1,12 +1,12 @@
-import { doc, getFirestore, onSnapshot, setDoc } from 'firebase/firestore';
+import { doc, onSnapshot, setDoc } from 'firebase/firestore';
 import {
   AboutAppConfig,
   AboutSocialLink,
   AboutTeamMember,
   SocialPlatformId,
 } from '../types/notes';
-import { ADMIN_EMAIL } from './adminConfigService';
-import { auth, firebaseApp, isFirebaseConfigured } from './googleAuthDrive';
+import { ADMIN_EMAIL, FirestoreSyncState } from './adminConfigService';
+import { auth, db, isFirebaseConfigured } from './googleAuthDrive';
 
 const ABOUT_CONFIG_CACHE_KEY = 'notes_about_app_config_cache_v2';
 const LEGACY_CACHE_KEY = 'notes_about_app_config_cache_v1';
@@ -36,6 +36,22 @@ const PLATFORM_LABEL_MAP = new Map<SocialPlatformId, string>(
   SOCIAL_PLATFORM_OPTIONS.map((opt) => [opt.id, opt.label])
 );
 
+function normalizeWebUrl(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return '';
+  if (
+    trimmed.startsWith('http://') ||
+    trimmed.startsWith('https://') ||
+    trimmed.startsWith('mailto:') ||
+    trimmed.startsWith('tel:') ||
+    trimmed.startsWith('data:') ||
+    trimmed.startsWith('/')
+  ) {
+    return trimmed;
+  }
+  return `https://${trimmed}`;
+}
+
 function normalizeMember(
   raw: Partial<AboutTeamMember> | null | undefined,
   fallbackId: string
@@ -43,7 +59,7 @@ function normalizeMember(
   if (!raw || typeof raw !== 'object') return null;
   const name = typeof raw.name === 'string' ? raw.name.trim() : '';
   const role = typeof raw.role === 'string' ? raw.role.trim() : '';
-  const image = typeof raw.image === 'string' ? raw.image.trim() : '';
+  const image = typeof raw.image === 'string' ? normalizeWebUrl(raw.image) : '';
   if (!name && !role && !image) return null;
   return {
     id: typeof raw.id === 'string' && raw.id.trim() ? raw.id.trim() : fallbackId,
@@ -75,7 +91,7 @@ export function normalizeAboutConfig(
       if (!item || typeof item !== 'object') return;
       const id = item.id as SocialPlatformId;
       if (!PLATFORM_LABEL_MAP.has(id) || seenSocials.has(id)) return;
-      const href = typeof item.href === 'string' ? item.href.trim() : '';
+      const href = typeof item.href === 'string' ? normalizeWebUrl(item.href) : '';
       const enabled = typeof item.enabled === 'boolean' ? item.enabled : Boolean(href);
       seenSocials.add(id);
       socials.push({
@@ -184,17 +200,20 @@ async function buildOfflineCachedConfig(config: AboutAppConfig): Promise<AboutAp
 }
 
 export function subscribeAboutAppConfig(
-  onConfig: (config: AboutAppConfig) => void
+  onConfig: (
+    config: AboutAppConfig,
+    syncState: FirestoreSyncState,
+    errorMessage?: string
+  ) => void
 ): () => void {
-  if (!isFirebaseConfigured || !firebaseApp) {
-    onConfig(loadCachedAboutConfig());
+  if (!isFirebaseConfigured || !db) {
+    onConfig(loadCachedAboutConfig(), 'unconfigured');
     return () => {};
   }
 
   let active = true;
 
   try {
-    const db = getFirestore(firebaseApp);
     const configRef = doc(db, 'app_config', 'about_app');
 
     return onSnapshot(
@@ -204,7 +223,7 @@ export function subscribeAboutAppConfig(
         if (snapshot.exists()) {
           const normalized = normalizeAboutConfig(snapshot.data() as Partial<AboutAppConfig>);
           cacheAboutConfig(normalized);
-          onConfig(normalized);
+          onConfig(normalized, 'synced');
 
           // Convert any external photo URLs into offline data URLs in localStorage cache
           void buildOfflineCachedConfig(normalized).then((offlineReady) => {
@@ -213,16 +232,24 @@ export function subscribeAboutAppConfig(
           });
         } else {
           cacheAboutConfig(EMPTY_ABOUT_CONFIG);
-          onConfig(EMPTY_ABOUT_CONFIG);
+          onConfig(EMPTY_ABOUT_CONFIG, 'synced');
         }
       },
-      () => {
+      (err) => {
         if (!active) return;
-        onConfig(loadCachedAboutConfig());
+        onConfig(
+          loadCachedAboutConfig(),
+          'error',
+          err?.message || 'Could not load About App settings from Firestore'
+        );
       }
     );
-  } catch {
-    onConfig(loadCachedAboutConfig());
+  } catch (err) {
+    onConfig(
+      loadCachedAboutConfig(),
+      'error',
+      err instanceof Error ? err.message : 'Firestore initialization failed'
+    );
     return () => {};
   }
 }
@@ -230,7 +257,7 @@ export function subscribeAboutAppConfig(
 export async function saveAboutAppConfig(
   next: Pick<AboutAppConfig, 'ceo' | 'team' | 'socials'>
 ): Promise<AboutAppConfig> {
-  if (!isFirebaseConfigured || !firebaseApp || !auth?.currentUser) {
+  if (!isFirebaseConfigured || !db || !auth?.currentUser) {
     throw new Error('Sign in with your admin Google account first.');
   }
   const currentEmail = (auth.currentUser.email || '').trim().toLowerCase();
@@ -274,9 +301,21 @@ export async function saveAboutAppConfig(
     throw new Error('Total profile photo data is too large. Use smaller images or photo URLs.');
   }
 
-  const db = getFirestore(firebaseApp);
   const configRef = doc(db, 'app_config', 'about_app');
-  await setDoc(configRef, payload);
+  await Promise.race([
+    setDoc(configRef, payload),
+    new Promise<never>((_, reject) =>
+      setTimeout(
+        () =>
+          reject(
+            new Error(
+              'Save timed out. Check your internet connection and Firebase Firestore Rules.'
+            )
+          ),
+        15000
+      )
+    ),
+  ]);
   cacheAboutConfig(normalized);
   return normalized;
 }
@@ -290,7 +329,7 @@ export function compressTeamPhotoFile(file: File): Promise<string> {
       const img = new Image();
       img.onerror = () => reject(new Error('Invalid image format'));
       img.onload = () => {
-        const maxSide = 360;
+        const maxSide = 280;
         const scale = Math.min(maxSide / img.width, maxSide / img.height, 1);
         const w = Math.max(1, Math.round(img.width * scale));
         const h = Math.max(1, Math.round(img.height * scale));
@@ -303,7 +342,7 @@ export function compressTeamPhotoFile(file: File): Promise<string> {
           return;
         }
         ctx.drawImage(img, 0, 0, w, h);
-        resolve(canvas.toDataURL('image/jpeg', 0.78));
+        resolve(canvas.toDataURL('image/jpeg', 0.74));
       };
       img.src = dataUrl;
     };

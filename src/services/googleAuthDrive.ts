@@ -11,6 +11,11 @@ import {
   signOut,
   User,
 } from 'firebase/auth';
+import {
+  Firestore,
+  getFirestore,
+  initializeFirestore,
+} from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 import { Folder, Note } from '../types/notes';
 
@@ -27,6 +32,17 @@ export const firebaseApp = isFirebaseConfigured
     : initializeApp(firebaseConfig)
   : null;
 export const auth: Auth | null = firebaseApp ? getAuth(firebaseApp) : null;
+export const db: Firestore | null = firebaseApp
+  ? (() => {
+      try {
+        return initializeFirestore(firebaseApp, {
+          experimentalAutoDetectLongPolling: true,
+        });
+      } catch {
+        return getFirestore(firebaseApp);
+      }
+    })()
+  : null;
 
 const provider = new GoogleAuthProvider();
 SCOPES.forEach((scope) => provider.addScope(scope));

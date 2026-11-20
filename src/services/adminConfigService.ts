@@ -1,6 +1,6 @@
-import { doc, getFirestore, onSnapshot, setDoc } from 'firebase/firestore';
+import { doc, onSnapshot, setDoc } from 'firebase/firestore';
 import { PreviewModeConfig, UserAccount } from '../types/notes';
-import { auth, firebaseApp, isFirebaseConfigured } from './googleAuthDrive';
+import { auth, db, isFirebaseConfigured } from './googleAuthDrive';
 
 export const ADMIN_EMAIL = 'riyadislambdd@gmail.com';
 const PREVIEW_CONFIG_CACHE_KEY = 'notes_preview_config_cache_v1';
@@ -71,13 +71,12 @@ function cachePreviewConfig(config: PreviewModeConfig): void {
 export function subscribePreviewModeConfig(
   onConfig: (config: PreviewModeConfig, syncState: FirestoreSyncState, errorMessage?: string) => void
 ): () => void {
-  if (!isFirebaseConfigured || !firebaseApp) {
+  if (!isFirebaseConfigured || !db) {
     onConfig(loadCachedPreviewConfig(), 'unconfigured');
     return () => {};
   }
 
   try {
-    const db = getFirestore(firebaseApp);
     const configRef = doc(db, 'app_config', 'preview_mode');
 
     return onSnapshot(
@@ -108,7 +107,7 @@ export function subscribePreviewModeConfig(
 export async function savePreviewModeConfig(
   next: Pick<PreviewModeConfig, 'enabled' | 'days' | 'hours' | 'minutes' | 'seconds'>
 ): Promise<PreviewModeConfig> {
-  if (!isFirebaseConfigured || !firebaseApp || !auth?.currentUser) {
+  if (!isFirebaseConfigured || !db || !auth?.currentUser) {
     throw new Error('Sign in with your admin Google account first.');
   }
   const currentEmail = (auth.currentUser.email || '').trim().toLowerCase();
@@ -122,9 +121,16 @@ export async function savePreviewModeConfig(
     updatedBy: currentEmail,
   });
 
-  const db = getFirestore(firebaseApp);
   const configRef = doc(db, 'app_config', 'preview_mode');
-  await setDoc(configRef, normalized, { merge: true });
+  await Promise.race([
+    setDoc(configRef, normalized, { merge: true }),
+    new Promise<never>((_, reject) =>
+      setTimeout(
+        () => reject(new Error('Save timed out. Check connection and Firebase Rules.')),
+        15000
+      )
+    ),
+  ]);
   cachePreviewConfig(normalized);
   return normalized;
 }

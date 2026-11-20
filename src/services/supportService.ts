@@ -2,7 +2,6 @@ import {
   addDoc,
   collection,
   doc,
-  getFirestore,
   onSnapshot,
   orderBy,
   query,
@@ -10,7 +9,7 @@ import {
 } from 'firebase/firestore';
 import { SupportMessage } from '../types/notes';
 import { ADMIN_EMAIL } from './adminConfigService';
-import { auth, firebaseApp, isFirebaseConfigured } from './googleAuthDrive';
+import { auth, db, isFirebaseConfigured } from './googleAuthDrive';
 
 const SUPPORT_COLLECTION = 'support_messages';
 
@@ -56,12 +55,11 @@ export async function submitSupportMessage(params: {
   if (!subject || !message) {
     throw new Error('Please enter both subject and message.');
   }
-  if (!isFirebaseConfigured || !firebaseApp) {
+  if (!isFirebaseConfigured || !db) {
     throw new Error('Support service is unavailable right now.');
   }
 
   const now = new Date().toISOString();
-  const db = getFirestore(firebaseApp);
   const docRef = await addDoc(collection(db, SUPPORT_COLLECTION), {
     userEmail,
     userName: params.userName.trim() || 'Notes User',
@@ -80,13 +78,12 @@ export function subscribeSupportMessages(
   onUpdate: (messages: SupportMessage[]) => void,
   onError?: (errorMessage: string) => void
 ): () => void {
-  if (!isFirebaseConfigured || !firebaseApp) {
+  if (!isFirebaseConfigured || !db) {
     onUpdate([]);
     return () => {};
   }
 
   try {
-    const db = getFirestore(firebaseApp);
     const q = query(collection(db, SUPPORT_COLLECTION), orderBy('createdAt', 'desc'));
     return onSnapshot(
       q,
@@ -134,7 +131,7 @@ export async function replyToSupportMessage(
   if (!replyText) {
     throw new Error('Please write a reply first.');
   }
-  if (!isFirebaseConfigured || !firebaseApp || !auth?.currentUser) {
+  if (!isFirebaseConfigured || !db || !auth?.currentUser) {
     throw new Error('Sign in with your admin Google account first.');
   }
 
@@ -180,7 +177,6 @@ export async function replyToSupportMessage(
   }
 
   const now = new Date().toISOString();
-  const db = getFirestore(firebaseApp);
   await updateDoc(doc(db, SUPPORT_COLLECTION, ticket.id), {
     status: 'replied',
     adminReply: replyText,
