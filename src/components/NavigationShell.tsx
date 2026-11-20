@@ -20,6 +20,7 @@ interface NavigationShellProps {
   showMobileTabs?: boolean;
   showFab?: boolean;
   fabFolderId?: string;
+  noPaddingBottom?: boolean;
 }
 
 export function NavigationShell({
@@ -27,6 +28,7 @@ export function NavigationShell({
   showMobileTabs = true,
   showFab = false,
   fabFolderId,
+  noPaddingBottom = false,
 }: NavigationShellProps) {
   const {
     screen,
@@ -217,7 +219,7 @@ export function NavigationShell({
       <main className="flex-1 lg:pl-64 min-w-0">
         <div
           className={`mx-auto w-full max-w-4xl ${
-            showMobileTabs ? 'pb-24 lg:pb-12' : 'pb-8'
+            noPaddingBottom ? 'pb-0' : showMobileTabs ? 'pb-24 lg:pb-12' : 'pb-8'
           }`}
         >
           {children}

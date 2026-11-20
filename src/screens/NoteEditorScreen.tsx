@@ -60,6 +60,25 @@ export function NoteEditorScreen({ mode }: NoteEditorScreenProps) {
 
   const menuRef = useRef<HTMLDivElement>(null);
   const saveTimerRef = useRef<number | null>(null);
+  const [viewportStyle, setViewportStyle] = useState<{ height?: string }>({});
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.visualViewport) return;
+    const vv = window.visualViewport;
+    const syncViewport = () => {
+      setViewportStyle({ height: `${Math.round(vv.height)}px` });
+      if (vv.offsetTop > 0) {
+        window.scrollTo(0, 0);
+      }
+    };
+    syncViewport();
+    vv.addEventListener('resize', syncViewport);
+    vv.addEventListener('scroll', syncViewport);
+    return () => {
+      vv.removeEventListener('resize', syncViewport);
+      vv.removeEventListener('scroll', syncViewport);
+    };
+  }, []);
 
   useEffect(() => {
     if (note) {
@@ -205,10 +224,13 @@ export function NoteEditorScreen({ mode }: NoteEditorScreenProps) {
   const folder = getFolderById(note.folderId);
 
   return (
-    <NavigationShell showMobileTabs={false}>
-      <div className="min-h-screen flex flex-col bg-[var(--bg-canvas)]">
+    <NavigationShell showMobileTabs={false} noPaddingBottom>
+      <div
+        style={viewportStyle}
+        className="h-[100dvh] flex flex-col overflow-hidden bg-[var(--bg-canvas)]"
+      >
         {/* Top Editor Header */}
-        <header className="sticky top-0 z-30 flex h-[57px] items-center justify-between bg-[var(--bg-canvas)]/95 backdrop-blur-md border-b border-[var(--divider)] px-3 sm:px-6">
+        <header className="shrink-0 z-30 flex h-[57px] items-center justify-between bg-[var(--bg-canvas)]/95 backdrop-blur-md border-b border-[var(--divider)] px-3 sm:px-6">
           <div className="flex items-center gap-2">
             <button
               type="button"

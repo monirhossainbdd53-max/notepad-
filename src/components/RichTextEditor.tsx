@@ -1308,8 +1308,246 @@ export function RichTextEditor({
         }}
       />
 
-      {/* Formatting & Image Toolbar */}
-      <div className="sticky top-[57px] z-20 bg-[var(--bg-canvas)]/95 backdrop-blur-sm border-b border-[var(--divider)] px-4 sm:px-6 py-2">
+      {/* Distraction-free scrollable writing & inline media area */}
+      <div className="flex-1 min-h-0 overflow-y-auto px-4 sm:px-8 pt-6 pb-8">
+        <input
+          type="text"
+          value={title}
+          onChange={(e) => onChangeTitle(e.target.value)}
+          placeholder="Note title"
+          aria-label="Note title"
+          className="w-full bg-transparent text-2xl sm:text-[28px] font-bold tracking-tight text-[var(--text-primary)] placeholder:text-[var(--text-secondary)]/60 focus:outline-none"
+        />
+
+        <div ref={editorWrapperRef} className="relative mt-4">
+          {dropIndicatorTop !== null && (
+            <div
+              aria-hidden="true"
+              style={{ top: `${dropIndicatorTop}px` }}
+              className="pointer-events-none absolute left-0 right-0 z-30 flex items-center"
+            >
+              <span className="h-2.5 w-2.5 -ml-1 rounded-full bg-[var(--accent-primary)] shrink-0" />
+              <span className="h-0.5 flex-1 bg-[var(--accent-primary)] rounded-full" />
+              <span className="h-2.5 w-2.5 -mr-1 rounded-full bg-[var(--accent-primary)] shrink-0" />
+            </div>
+          )}
+
+          <div
+            ref={editorRef}
+            contentEditable
+            suppressContentEditableWarning
+            data-placeholder="Start writing..."
+            onInput={() => {
+              saveSelection();
+              emitChange();
+            }}
+            onKeyUp={() => {
+              saveSelection();
+              updateToolbarState();
+            }}
+            onMouseUp={() => {
+              saveSelection();
+              updateToolbarState();
+            }}
+            onTouchEnd={() => {
+              saveSelection();
+              updateToolbarState();
+            }}
+            onBlur={() => saveSelection()}
+            onPointerDown={handleEditorPointerDown}
+            onClick={handleEditorClick}
+            onPaste={handlePaste}
+            aria-label="Note content"
+            className="note-content min-h-[260px] text-[var(--text-primary)] focus:outline-none"
+          />
+        </div>
+
+        {/* Optional Quick Templates (only visible when note is completely empty) */}
+        {!title.trim() &&
+          !stripHtmlToText(content) &&
+          !content.includes('note-image-block') &&
+          !content.includes('note-table') && (
+            <div className="mt-6 flex flex-wrap items-center gap-2">
+              {QUICK_TEMPLATES.map((tpl) => (
+                <button
+                  key={tpl.id}
+                  type="button"
+                  onClick={() => handleApplyTemplate(tpl)}
+                  className="min-h-[34px] rounded-xl bg-[var(--bg-card)] border border-[var(--divider)] px-3 text-xs font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent-primary)]/60 transition-colors cursor-pointer"
+                >
+                  + {tpl.label}
+                </button>
+              ))}
+            </div>
+          )}
+
+        {/* Legacy bottom attachments fallback (if any older note has note.images) */}
+        {images.length > 0 && (
+          <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {images.map((src, idx) => (
+              <div
+                key={`${idx}_${src.slice(0, 32)}`}
+                className="relative overflow-hidden rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)]"
+              >
+                <img
+                  src={src}
+                  alt={`Note attachment ${idx + 1}`}
+                  referrerPolicy="no-referrer"
+                  className="w-full max-h-72 object-cover"
+                />
+                <button
+                  type="button"
+                  onClick={() => handleRemoveLegacyImage(idx)}
+                  aria-label="Remove image"
+                  className="absolute top-2.5 right-2.5 flex h-8 w-8 items-center justify-center rounded-full bg-[#202124]/80 text-white hover:bg-[#E45B5B] transition-colors cursor-pointer"
+                >
+                  <X className="h-4 w-4" strokeWidth={2.2} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Keyboard-Docked Formatting & Image Toolbar */}
+      <div className="shrink-0 relative z-30 bg-[var(--bg-canvas)]/95 backdrop-blur-md border-t border-[var(--divider)] px-3 sm:px-6 py-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))]">
+        {sizeSliderOpen && (
+          <div className="mb-2 flex items-center gap-3 rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] px-3.5 py-2">
+            <span className="text-[11px] font-semibold text-[var(--text-secondary)] shrink-0">
+              Size
+            </span>
+
+            <div
+              ref={sliderTrackRef}
+              role="slider"
+              aria-label="Selected text font size"
+              aria-valuemin={MIN_TEXT_SIZE}
+              aria-valuemax={MAX_TEXT_SIZE}
+              aria-valuenow={activeFontSize}
+              tabIndex={0}
+              onPointerDown={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                isSlidingRef.current = true;
+                e.currentTarget.setPointerCapture(e.pointerId);
+                updateSliderFromClientX(e.clientX, false);
+              }}
+              onPointerMove={(e) => {
+                if (!isSlidingRef.current) return;
+                e.preventDefault();
+                updateSliderFromClientX(e.clientX, false);
+              }}
+              onPointerUp={(e) => {
+                if (!isSlidingRef.current) return;
+                isSlidingRef.current = false;
+                updateSliderFromClientX(e.clientX, true);
+              }}
+              onPointerCancel={() => {
+                if (!isSlidingRef.current) return;
+                isSlidingRef.current = false;
+                emitChange();
+              }}
+              className="relative flex-1 h-8 flex items-center touch-none cursor-pointer select-none"
+            >
+              <div className="w-full h-1.5 rounded-full bg-[var(--divider)] overflow-hidden">
+                <div
+                  className="h-full bg-[var(--accent-primary)] rounded-full"
+                  style={{
+                    width: `${((activeFontSize - MIN_TEXT_SIZE) / (MAX_TEXT_SIZE - MIN_TEXT_SIZE)) * 100}%`,
+                  }}
+                />
+              </div>
+              <div
+                style={{
+                  left: `${((activeFontSize - MIN_TEXT_SIZE) / (MAX_TEXT_SIZE - MIN_TEXT_SIZE)) * 100}%`,
+                }}
+                className="absolute top-1/2 -translate-x-1/2 -translate-y-1/2 h-5 w-5 rounded-full bg-[var(--accent-primary)] border-2 border-white dark:border-[#171717] shadow-sm pointer-events-none"
+              />
+            </div>
+
+            <span className="min-w-[38px] text-right text-xs font-semibold tabular-nums text-[var(--text-primary)] shrink-0">
+              {activeFontSize}px
+            </span>
+
+            <button
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={closeSizeSlider}
+              aria-label="Done resizing"
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[var(--accent-soft)] text-[var(--accent-primary)] hover:opacity-85 cursor-pointer"
+            >
+              <Check className="h-3.5 w-3.5" strokeWidth={2.4} />
+            </button>
+          </div>
+        )}
+
+        {translateOpen && (
+          <div className="mb-2 rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] p-3 space-y-2.5">
+            <div className="flex items-center justify-between gap-2">
+              <div className="min-w-0 flex items-center gap-2">
+                <Languages className="h-4 w-4 text-[var(--accent-primary)] shrink-0" strokeWidth={2} />
+                <span className="text-xs font-semibold text-[var(--text-primary)] truncate">
+                  Translate: “{translateSourceText}”
+                </span>
+              </div>
+              <button
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={closeTranslateBar}
+                aria-label="Close translate"
+                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)] cursor-pointer"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+
+            <div className="flex flex-wrap gap-1.5">
+              {TRANSLATE_LANGUAGES.map((lang) => {
+                const busy = translatingLang === lang.code;
+                return (
+                  <button
+                    key={lang.code}
+                    type="button"
+                    disabled={Boolean(translatingLang)}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => handleRunTranslate(lang.code, lang.label)}
+                    className="inline-flex min-h-[32px] items-center gap-1.5 rounded-xl bg-[var(--bg-canvas)] border border-[var(--divider)] px-3 text-xs font-medium text-[var(--text-primary)] hover:border-[var(--accent-primary)]/70 disabled:opacity-60 transition-colors cursor-pointer"
+                  >
+                    {busy && <Loader2 className="h-3 w-3 animate-spin text-[var(--accent-primary)]" />}
+                    <span>{lang.nativeLabel}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {isListening && (
+          <div className="mb-2 flex items-center justify-between gap-2 rounded-xl bg-[var(--accent-soft)] px-3 py-1.5 text-xs">
+            <span className="min-w-0 truncate font-medium text-[var(--text-primary)]">
+              {interimTranscript
+                ? interimTranscript
+                : `Listening (${speechLang === 'bn-BD' ? 'বাংলা' : 'English'})… Speak now`}
+            </span>
+            <div className="flex items-center gap-1.5 shrink-0">
+              <button
+                type="button"
+                onClick={() => handleSwitchVoiceLanguage(speechLang === 'bn-BD' ? 'en-US' : 'bn-BD')}
+                className="rounded-lg bg-[var(--bg-card)] px-2 py-0.5 text-[11px] font-semibold text-[var(--text-primary)] cursor-pointer"
+              >
+                {speechLang === 'bn-BD' ? 'বাংলা' : 'EN'}
+              </button>
+              <button
+                type="button"
+                onClick={() => handleToggleVoice()}
+                className="font-semibold text-[#E45B5B] px-1 cursor-pointer"
+              >
+                Stop
+              </button>
+            </div>
+          </div>
+        )}
+
         <div className="flex items-center justify-between gap-1">
           <div className="flex items-center gap-0.5 sm:gap-1 overflow-x-auto no-scrollbar min-w-0">
             {/* Free Basic Formatting */}
@@ -1526,7 +1764,7 @@ export function RichTextEditor({
               </button>
 
               {insertMenuOpen && (
-                <div className="absolute right-0 mt-1.5 w-52 rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] py-1.5 z-40">
+                <div className="absolute right-0 bottom-full mb-2 w-52 rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] py-1.5 z-40 shadow-lg">
                   <button
                     type="button"
                     onClick={handleInsertTable}
@@ -1611,244 +1849,6 @@ export function RichTextEditor({
             </button>
           </div>
         </div>
-
-        {sizeSliderOpen && (
-          <div className="mt-2 flex items-center gap-3 rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] px-3.5 py-2">
-            <span className="text-[11px] font-semibold text-[var(--text-secondary)] shrink-0">
-              Size
-            </span>
-
-            <div
-              ref={sliderTrackRef}
-              role="slider"
-              aria-label="Selected text font size"
-              aria-valuemin={MIN_TEXT_SIZE}
-              aria-valuemax={MAX_TEXT_SIZE}
-              aria-valuenow={activeFontSize}
-              tabIndex={0}
-              onPointerDown={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                isSlidingRef.current = true;
-                e.currentTarget.setPointerCapture(e.pointerId);
-                updateSliderFromClientX(e.clientX, false);
-              }}
-              onPointerMove={(e) => {
-                if (!isSlidingRef.current) return;
-                e.preventDefault();
-                updateSliderFromClientX(e.clientX, false);
-              }}
-              onPointerUp={(e) => {
-                if (!isSlidingRef.current) return;
-                isSlidingRef.current = false;
-                updateSliderFromClientX(e.clientX, true);
-              }}
-              onPointerCancel={() => {
-                if (!isSlidingRef.current) return;
-                isSlidingRef.current = false;
-                emitChange();
-              }}
-              className="relative flex-1 h-8 flex items-center touch-none cursor-pointer select-none"
-            >
-              <div className="w-full h-1.5 rounded-full bg-[var(--divider)] overflow-hidden">
-                <div
-                  className="h-full bg-[var(--accent-primary)] rounded-full"
-                  style={{
-                    width: `${((activeFontSize - MIN_TEXT_SIZE) / (MAX_TEXT_SIZE - MIN_TEXT_SIZE)) * 100}%`,
-                  }}
-                />
-              </div>
-              <div
-                style={{
-                  left: `${((activeFontSize - MIN_TEXT_SIZE) / (MAX_TEXT_SIZE - MIN_TEXT_SIZE)) * 100}%`,
-                }}
-                className="absolute top-1/2 -translate-x-1/2 -translate-y-1/2 h-5 w-5 rounded-full bg-[var(--accent-primary)] border-2 border-white dark:border-[#171717] shadow-sm pointer-events-none"
-              />
-            </div>
-
-            <span className="min-w-[38px] text-right text-xs font-semibold tabular-nums text-[var(--text-primary)] shrink-0">
-              {activeFontSize}px
-            </span>
-
-            <button
-              type="button"
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={closeSizeSlider}
-              aria-label="Done resizing"
-              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[var(--accent-soft)] text-[var(--accent-primary)] hover:opacity-85 cursor-pointer"
-            >
-              <Check className="h-3.5 w-3.5" strokeWidth={2.4} />
-            </button>
-          </div>
-        )}
-
-        {translateOpen && (
-          <div className="mt-2 rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] p-3 space-y-2.5">
-            <div className="flex items-center justify-between gap-2">
-              <div className="min-w-0 flex items-center gap-2">
-                <Languages className="h-4 w-4 text-[var(--accent-primary)] shrink-0" strokeWidth={2} />
-                <span className="text-xs font-semibold text-[var(--text-primary)] truncate">
-                  Translate: “{translateSourceText}”
-                </span>
-              </div>
-              <button
-                type="button"
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={closeTranslateBar}
-                aria-label="Close translate"
-                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)] cursor-pointer"
-              >
-                <X className="h-3.5 w-3.5" />
-              </button>
-            </div>
-
-            <div className="flex flex-wrap gap-1.5">
-              {TRANSLATE_LANGUAGES.map((lang) => {
-                const busy = translatingLang === lang.code;
-                return (
-                  <button
-                    key={lang.code}
-                    type="button"
-                    disabled={Boolean(translatingLang)}
-                    onMouseDown={(e) => e.preventDefault()}
-                    onClick={() => handleRunTranslate(lang.code, lang.label)}
-                    className="inline-flex min-h-[32px] items-center gap-1.5 rounded-xl bg-[var(--bg-canvas)] border border-[var(--divider)] px-3 text-xs font-medium text-[var(--text-primary)] hover:border-[var(--accent-primary)]/70 disabled:opacity-60 transition-colors cursor-pointer"
-                  >
-                    {busy && <Loader2 className="h-3 w-3 animate-spin text-[var(--accent-primary)]" />}
-                    <span>{lang.nativeLabel}</span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
-        {isListening && (
-          <div className="mt-2 flex items-center justify-between gap-2 rounded-xl bg-[var(--accent-soft)] px-3 py-1.5 text-xs">
-            <span className="min-w-0 truncate font-medium text-[var(--text-primary)]">
-              {interimTranscript
-                ? interimTranscript
-                : `Listening (${speechLang === 'bn-BD' ? 'বাংলা' : 'English'})… Speak now`}
-            </span>
-            <div className="flex items-center gap-1.5 shrink-0">
-              <button
-                type="button"
-                onClick={() => handleSwitchVoiceLanguage(speechLang === 'bn-BD' ? 'en-US' : 'bn-BD')}
-                className="rounded-lg bg-[var(--bg-card)] px-2 py-0.5 text-[11px] font-semibold text-[var(--text-primary)] cursor-pointer"
-              >
-                {speechLang === 'bn-BD' ? 'বাংলা' : 'EN'}
-              </button>
-              <button
-                type="button"
-                onClick={() => handleToggleVoice()}
-                className="font-semibold text-[#E45B5B] px-1 cursor-pointer"
-              >
-                Stop
-              </button>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Distraction-free writing & inline media area */}
-      <div className="flex-1 px-4 sm:px-8 pt-6 pb-20">
-        <input
-          type="text"
-          value={title}
-          onChange={(e) => onChangeTitle(e.target.value)}
-          placeholder="Note title"
-          aria-label="Note title"
-          className="w-full bg-transparent text-2xl sm:text-[28px] font-bold tracking-tight text-[var(--text-primary)] placeholder:text-[var(--text-secondary)]/60 focus:outline-none"
-        />
-
-        <div ref={editorWrapperRef} className="relative mt-4">
-          {dropIndicatorTop !== null && (
-            <div
-              aria-hidden="true"
-              style={{ top: `${dropIndicatorTop}px` }}
-              className="pointer-events-none absolute left-0 right-0 z-30 flex items-center"
-            >
-              <span className="h-2.5 w-2.5 -ml-1 rounded-full bg-[var(--accent-primary)] shrink-0" />
-              <span className="h-0.5 flex-1 bg-[var(--accent-primary)] rounded-full" />
-              <span className="h-2.5 w-2.5 -mr-1 rounded-full bg-[var(--accent-primary)] shrink-0" />
-            </div>
-          )}
-
-          <div
-            ref={editorRef}
-            contentEditable
-            suppressContentEditableWarning
-            data-placeholder="Start writing..."
-            onInput={() => {
-              saveSelection();
-              emitChange();
-            }}
-            onKeyUp={() => {
-              saveSelection();
-              updateToolbarState();
-            }}
-            onMouseUp={() => {
-              saveSelection();
-              updateToolbarState();
-            }}
-            onTouchEnd={() => {
-              saveSelection();
-              updateToolbarState();
-            }}
-            onBlur={() => saveSelection()}
-            onPointerDown={handleEditorPointerDown}
-            onClick={handleEditorClick}
-            onPaste={handlePaste}
-            aria-label="Note content"
-            className="note-content min-h-[260px] text-[var(--text-primary)] focus:outline-none"
-          />
-        </div>
-
-        {/* Optional Quick Templates (only visible when note is completely empty) */}
-        {!title.trim() &&
-          !stripHtmlToText(content) &&
-          !content.includes('note-image-block') &&
-          !content.includes('note-table') && (
-            <div className="mt-6 flex flex-wrap items-center gap-2">
-              {QUICK_TEMPLATES.map((tpl) => (
-                <button
-                  key={tpl.id}
-                  type="button"
-                  onClick={() => handleApplyTemplate(tpl)}
-                  className="min-h-[34px] rounded-xl bg-[var(--bg-card)] border border-[var(--divider)] px-3 text-xs font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent-primary)]/60 transition-colors cursor-pointer"
-                >
-                  + {tpl.label}
-                </button>
-              ))}
-            </div>
-          )}
-
-        {/* Legacy bottom attachments fallback (if any older note has note.images) */}
-        {images.length > 0 && (
-          <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {images.map((src, idx) => (
-              <div
-                key={`${idx}_${src.slice(0, 32)}`}
-                className="relative overflow-hidden rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)]"
-              >
-                <img
-                  src={src}
-                  alt={`Note attachment ${idx + 1}`}
-                  referrerPolicy="no-referrer"
-                  className="w-full max-h-72 object-cover"
-                />
-                <button
-                  type="button"
-                  onClick={() => handleRemoveLegacyImage(idx)}
-                  aria-label="Remove image"
-                  className="absolute top-2.5 right-2.5 flex h-8 w-8 items-center justify-center rounded-full bg-[#202124]/80 text-white hover:bg-[#E45B5B] transition-colors cursor-pointer"
-                >
-                  <X className="h-4 w-4" strokeWidth={2.2} />
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
       </div>
 
       {/* Floating thumbnail ghost while dragging an inline image */}

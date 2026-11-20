@@ -24,6 +24,7 @@ import { GoogleSignInButton } from '../components/GoogleSignInButton';
 import { NavigationShell } from '../components/NavigationShell';
 import { PinDialog } from '../components/PinDialog';
 import { useNotes } from '../context/NotesContext';
+import { exportNotesAsPdfZip, exportNotesAsTextZip } from '../utils/exportNotesZip';
 import { formatFullDate } from '../utils/noteHelpers';
 
 export function SettingsScreen() {
@@ -62,6 +63,7 @@ export function SettingsScreen() {
   const [pinSheetOpen, setPinSheetOpen] = useState(false);
   const [legalDoc, setLegalDoc] = useState<'privacy' | 'terms' | null>(null);
   const [avatarError, setAvatarError] = useState(false);
+  const [exportingFormat, setExportingFormat] = useState<'txt' | 'pdf' | null>(null);
 
   const isGuest = account.isGuest !== false;
 
@@ -80,23 +82,26 @@ export function SettingsScreen() {
     .slice(0, 2)
     .toUpperCase();
 
-  const handleExportBackup = () => {
+  const handleExportZip = async (format: 'txt' | 'pdf') => {
+    if (exportingFormat) return;
+    setExportingFormat(format);
     try {
-      const payload = JSON.stringify(
-        { notes, folders, exportedAt: new Date().toISOString() },
-        null,
-        2
+      const result =
+        format === 'txt'
+          ? await exportNotesAsTextZip(notes, folders)
+          : await exportNotesAsPdfZip(notes, folders);
+      showToast(
+        result.mode === 'shared'
+          ? `Prepared ${result.count} ${format.toUpperCase()} notes in ZIP`
+          : `Downloaded ${result.count} ${format.toUpperCase()} notes as ZIP`
       );
-      const blob = new Blob([payload], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `notes-backup-${new Date().toISOString().slice(0, 10)}.json`;
-      link.click();
-      URL.revokeObjectURL(url);
-      showToast('Local backup exported');
-    } catch {
-      showToast('Export unavailable');
+    } catch (err) {
+      showToast(
+        err instanceof Error ? err.message : 'Export unavailable',
+        'danger'
+      );
+    } finally {
+      setExportingFormat(null);
     }
   };
 
@@ -504,14 +509,39 @@ export function SettingsScreen() {
             )}
           </div>
 
-          <button
-            type="button"
-            onClick={handleExportBackup}
-            className="flex w-full min-h-[46px] items-center justify-center gap-2 rounded-xl bg-[var(--text-primary)] dark:bg-[var(--accent-primary)] text-sm font-semibold text-[var(--bg-card)] dark:text-[#171717] cursor-pointer"
-          >
-            <Download className="h-4 w-4" strokeWidth={2} />
-            Export Local Backup (.json)
-          </button>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+            <button
+              type="button"
+              disabled={Boolean(exportingFormat)}
+              onClick={() => {
+                void handleExportZip('txt');
+              }}
+              className="flex w-full min-h-[46px] items-center justify-center gap-2 rounded-xl border border-[var(--divider)] bg-[var(--bg-canvas)] px-4 text-sm font-semibold text-[var(--text-primary)] hover:bg-[var(--bg-subtle)] disabled:opacity-60 transition-colors cursor-pointer"
+            >
+              {exportingFormat === 'txt' ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <FileText className="h-4 w-4" strokeWidth={2} />
+              )}
+              Download Text (.zip)
+            </button>
+
+            <button
+              type="button"
+              disabled={Boolean(exportingFormat)}
+              onClick={() => {
+                void handleExportZip('pdf');
+              }}
+              className="flex w-full min-h-[46px] items-center justify-center gap-2 rounded-xl bg-[var(--text-primary)] dark:bg-[var(--accent-primary)] px-4 text-sm font-semibold text-[var(--bg-card)] dark:text-[#171717] disabled:opacity-60 transition-opacity hover:opacity-90 cursor-pointer"
+            >
+              {exportingFormat === 'pdf' ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Download className="h-4 w-4" strokeWidth={2} />
+              )}
+              Download PDF (.zip)
+            </button>
+          </div>
         </div>
       </InfoSheetDialog>
 
