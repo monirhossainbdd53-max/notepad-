@@ -1,5 +1,5 @@
 import React from 'react';
-import { ChevronLeft, ChevronRight, Globe } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Globe, User } from 'lucide-react';
 import { NavigationShell } from '../components/NavigationShell';
 import { useNotes } from '../context/NotesContext';
 import { SocialPlatformId } from '../types/notes';
@@ -62,6 +62,10 @@ export function AboutAppScreen() {
   const visibleSocials = aboutConfig.socials.filter(
     (s) => s.enabled && s.href.trim().length > 0
   );
+
+  const ceo = aboutConfig.ceo;
+  const hasCeo = Boolean(ceo && (ceo.name || ceo.role || ceo.image));
+  const hasLeadership = hasCeo || aboutConfig.team.length > 0;
 
   const teamGridClass =
     aboutConfig.team.length === 1
@@ -154,59 +158,79 @@ export function AboutAppScreen() {
           </button>
         </div>
 
-        {/* Hierarchical Team Profiles */}
-        <div className="pt-1 space-y-3">
-          <h2 className="px-0.5 text-xs font-semibold text-[var(--text-secondary)]">
-            Leadership & Team
-          </h2>
+        {/* Dynamic Leadership & Team Profiles (Admin-controlled, cached for offline) */}
+        {hasLeadership && (
+          <div className="pt-1 space-y-3">
+            <h2 className="px-0.5 text-xs font-semibold text-[var(--text-secondary)]">
+              Leadership & Team
+            </h2>
 
-          {/* Tier 1: Founder & CEO */}
-          <div className="flex justify-center">
-            <div className="w-36 sm:w-40 rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] p-2 text-center">
-              <div className="aspect-[3/4] w-full overflow-hidden rounded-xl bg-[var(--bg-subtle)]">
-                <img
-                  src={aboutConfig.ceo.image}
-                  alt={`${aboutConfig.ceo.name} — ${aboutConfig.ceo.role}`}
-                  referrerPolicy="no-referrer"
-                  className="h-full w-full object-cover object-top"
-                />
-              </div>
-              <p className="mt-2 text-[13px] font-semibold text-[var(--text-primary)] leading-tight">
-                {aboutConfig.ceo.name}
-              </p>
-              <p className="mt-0.5 text-[11px] font-medium text-[var(--accent-primary)] leading-tight">
-                {aboutConfig.ceo.role}
-              </p>
-            </div>
-          </div>
-
-          {/* Tier 2: Team Members */}
-          {aboutConfig.team.length > 0 && (
-            <div className={`grid gap-2 sm:gap-3 ${teamGridClass}`}>
-              {aboutConfig.team.map((member) => (
-                <div
-                  key={member.id}
-                  className="rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] p-1.5 sm:p-2 text-center"
-                >
-                  <div className="aspect-[3/4] w-full overflow-hidden rounded-xl bg-[var(--bg-subtle)]">
-                    <img
-                      src={member.image}
-                      alt={`${member.name} — ${member.role}`}
-                      referrerPolicy="no-referrer"
-                      className="h-full w-full object-cover object-top"
-                    />
+            {/* Tier 1: CEO Card (Separate on top) */}
+            {hasCeo && ceo && (
+              <div className="flex justify-center">
+                <div className="w-36 sm:w-40 rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] p-2 text-center">
+                  <div className="aspect-[3/4] w-full overflow-hidden rounded-xl bg-[var(--bg-subtle)] flex items-center justify-center">
+                    {ceo.image ? (
+                      <img
+                        src={ceo.image}
+                        alt={ceo.name || ceo.role || 'CEO'}
+                        referrerPolicy="no-referrer"
+                        className="h-full w-full object-cover object-top"
+                      />
+                    ) : (
+                      <User className="h-10 w-10 text-[var(--text-secondary)] opacity-50" strokeWidth={1.6} />
+                    )}
                   </div>
-                  <p className="mt-1.5 text-[11px] sm:text-xs font-semibold text-[var(--text-primary)] leading-tight">
-                    {member.name}
-                  </p>
-                  <p className="mt-0.5 text-[10px] sm:text-[11px] text-[var(--text-secondary)] leading-tight">
-                    {member.role}
-                  </p>
+                  {ceo.name && (
+                    <p className="mt-2 text-[13px] font-semibold text-[var(--text-primary)] leading-tight">
+                      {ceo.name}
+                    </p>
+                  )}
+                  {ceo.role && (
+                    <p className="mt-0.5 text-[11px] font-medium text-[var(--accent-primary)] leading-tight">
+                      {ceo.role}
+                    </p>
+                  )}
                 </div>
-              ))}
-            </div>
-          )}
-        </div>
+              </div>
+            )}
+
+            {/* Tier 2: Sequential Team Members */}
+            {aboutConfig.team.length > 0 && (
+              <div className={`grid gap-2 sm:gap-3 ${teamGridClass}`}>
+                {aboutConfig.team.map((member) => (
+                  <div
+                    key={member.id}
+                    className="rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] p-1.5 sm:p-2 text-center"
+                  >
+                    <div className="aspect-[3/4] w-full overflow-hidden rounded-xl bg-[var(--bg-subtle)] flex items-center justify-center">
+                      {member.image ? (
+                        <img
+                          src={member.image}
+                          alt={member.name || member.role || 'Team Member'}
+                          referrerPolicy="no-referrer"
+                          className="h-full w-full object-cover object-top"
+                        />
+                      ) : (
+                        <User className="h-8 w-8 text-[var(--text-secondary)] opacity-50" strokeWidth={1.6} />
+                      )}
+                    </div>
+                    {member.name && (
+                      <p className="mt-1.5 text-[11px] sm:text-xs font-semibold text-[var(--text-primary)] leading-tight">
+                        {member.name}
+                      </p>
+                    )}
+                    {member.role && (
+                      <p className="mt-0.5 text-[10px] sm:text-[11px] text-[var(--text-secondary)] leading-tight">
+                        {member.role}
+                      </p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </section>
     </NavigationShell>
   );

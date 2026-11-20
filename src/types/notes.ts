@@ -141,7 +141,7 @@ export interface AboutTeamMember {
 }
 
 export interface AboutAppConfig {
-  ceo: AboutTeamMember;
+  ceo: AboutTeamMember | null;
   team: AboutTeamMember[];
   socials: AboutSocialLink[];
   updatedAt: string;

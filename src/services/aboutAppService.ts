@@ -1,8 +1,4 @@
 import { doc, getFirestore, onSnapshot, setDoc } from 'firebase/firestore';
-import teamDesignerImg from '../assets/images/team_designer_1795044479332.jpg';
-import teamEngineerImg from '../assets/images/team_engineer_1795044479765.jpg';
-import teamManagerImg from '../assets/images/team_manager_1795044479272.jpg';
-import teamOperationsImg from '../assets/images/team_operations_1795044480807.jpg';
 import {
   AboutAppConfig,
   AboutSocialLink,
@@ -12,133 +8,105 @@ import {
 import { ADMIN_EMAIL } from './adminConfigService';
 import { auth, firebaseApp, isFirebaseConfigured } from './googleAuthDrive';
 
-const ABOUT_CONFIG_CACHE_KEY = 'notes_about_app_config_cache_v1';
+const ABOUT_CONFIG_CACHE_KEY = 'notes_about_app_config_cache_v2';
+const LEGACY_CACHE_KEY = 'notes_about_app_config_cache_v1';
 
-const DEFAULT_CEO_IMAGE =
-  '/assets/aistudio/file_0000000064dc820bb4574f2daade8aa3_351ff63f.png';
-
-export const DEFAULT_SOCIAL_LINKS: AboutSocialLink[] = [
-  { id: 'facebook', label: 'Facebook', href: 'https://facebook.com', enabled: true },
-  { id: 'whatsapp', label: 'WhatsApp', href: 'https://wa.me/', enabled: true },
-  { id: 'instagram', label: 'Instagram', href: 'https://instagram.com', enabled: true },
-  { id: 'youtube', label: 'YouTube', href: 'https://youtube.com', enabled: true },
-  { id: 'x', label: 'X (Twitter)', href: 'https://x.com', enabled: true },
-  { id: 'linkedin', label: 'LinkedIn', href: 'https://linkedin.com', enabled: true },
-  { id: 'website', label: 'Website', href: 'https://example.com', enabled: true },
+export const SOCIAL_PLATFORM_OPTIONS: Array<{
+  id: SocialPlatformId;
+  label: string;
+  placeholder: string;
+}> = [
+  { id: 'facebook', label: 'Facebook', placeholder: 'https://facebook.com/...' },
+  { id: 'whatsapp', label: 'WhatsApp', placeholder: 'https://wa.me/...' },
+  { id: 'instagram', label: 'Instagram', placeholder: 'https://instagram.com/...' },
+  { id: 'youtube', label: 'YouTube', placeholder: 'https://youtube.com/...' },
+  { id: 'x', label: 'X (Twitter)', placeholder: 'https://x.com/...' },
+  { id: 'linkedin', label: 'LinkedIn', placeholder: 'https://linkedin.com/in/...' },
+  { id: 'website', label: 'Website', placeholder: 'https://...' },
 ];
 
-export const DEFAULT_ABOUT_CONFIG: AboutAppConfig = {
-  ceo: {
-    id: 'ceo',
-    name: 'Riyad Islam',
-    role: 'Founder & CEO',
-    image: DEFAULT_CEO_IMAGE,
-  },
-  team: [
-    {
-      id: 'manager',
-      name: 'Nadia Rahman',
-      role: 'Product Manager',
-      image: teamManagerImg,
-    },
-    {
-      id: 'engineer',
-      name: 'Tanvir Ahmed',
-      role: 'Lead Engineer',
-      image: teamEngineerImg,
-    },
-    {
-      id: 'designer',
-      name: 'Daniel Brooks',
-      role: 'Product Designer',
-      image: teamDesignerImg,
-    },
-    {
-      id: 'operations',
-      name: 'Hannah Miller',
-      role: 'Operations & Support',
-      image: teamOperationsImg,
-    },
-  ],
-  socials: DEFAULT_SOCIAL_LINKS,
+export const EMPTY_ABOUT_CONFIG: AboutAppConfig = {
+  ceo: null,
+  team: [],
+  socials: [],
   updatedAt: '',
 };
 
-const VALID_SOCIAL_IDS = new Set<SocialPlatformId>(
-  DEFAULT_SOCIAL_LINKS.map((s) => s.id)
+const PLATFORM_LABEL_MAP = new Map<SocialPlatformId, string>(
+  SOCIAL_PLATFORM_OPTIONS.map((opt) => [opt.id, opt.label])
 );
 
 function normalizeMember(
   raw: Partial<AboutTeamMember> | null | undefined,
-  fallback: AboutTeamMember
-): AboutTeamMember {
+  fallbackId: string
+): AboutTeamMember | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const name = typeof raw.name === 'string' ? raw.name.trim() : '';
+  const role = typeof raw.role === 'string' ? raw.role.trim() : '';
+  const image = typeof raw.image === 'string' ? raw.image.trim() : '';
+  if (!name && !role && !image) return null;
   return {
-    id: typeof raw?.id === 'string' && raw.id.trim() ? raw.id.trim() : fallback.id,
-    name: typeof raw?.name === 'string' && raw.name.trim() ? raw.name.trim() : fallback.name,
-    role: typeof raw?.role === 'string' && raw.role.trim() ? raw.role.trim() : fallback.role,
-    image: typeof raw?.image === 'string' && raw.image.trim() ? raw.image.trim() : fallback.image,
+    id: typeof raw.id === 'string' && raw.id.trim() ? raw.id.trim() : fallbackId,
+    name,
+    role,
+    image,
   };
 }
 
 export function normalizeAboutConfig(
   raw: Partial<AboutAppConfig> | null | undefined
 ): AboutAppConfig {
-  const ceo = normalizeMember(raw?.ceo, DEFAULT_ABOUT_CONFIG.ceo);
-
-  let team: AboutTeamMember[] = DEFAULT_ABOUT_CONFIG.team;
-  if (Array.isArray(raw?.team)) {
-    team = raw.team
-      .filter((item): item is AboutTeamMember => Boolean(item && typeof item === 'object'))
-      .map((item, idx) => ({
-        id:
-          typeof item.id === 'string' && item.id.trim()
-            ? item.id.trim()
-            : `member_${idx + 1}`,
-        name: typeof item.name === 'string' ? item.name.trim() : '',
-        role: typeof item.role === 'string' ? item.role.trim() : '',
-        image:
-          typeof item.image === 'string' && item.image.trim()
-            ? item.image.trim()
-            : DEFAULT_CEO_IMAGE,
-      }))
-      .filter((m) => m.name.length > 0 || m.role.length > 0);
+  if (!raw || typeof raw !== 'object') {
+    return EMPTY_ABOUT_CONFIG;
   }
 
-  const incomingMap = new Map<SocialPlatformId, Partial<AboutSocialLink>>();
-  if (Array.isArray(raw?.socials)) {
+  const ceo = normalizeMember(raw.ceo, 'ceo');
+
+  const team: AboutTeamMember[] = Array.isArray(raw.team)
+    ? raw.team
+        .map((item, idx) => normalizeMember(item, `member_${idx + 1}`))
+        .filter((m): m is AboutTeamMember => m !== null)
+    : [];
+
+  const socials: AboutSocialLink[] = [];
+  const seenSocials = new Set<SocialPlatformId>();
+  if (Array.isArray(raw.socials)) {
     raw.socials.forEach((item) => {
-      if (item && VALID_SOCIAL_IDS.has(item.id as SocialPlatformId)) {
-        incomingMap.set(item.id as SocialPlatformId, item);
-      }
+      if (!item || typeof item !== 'object') return;
+      const id = item.id as SocialPlatformId;
+      if (!PLATFORM_LABEL_MAP.has(id) || seenSocials.has(id)) return;
+      const href = typeof item.href === 'string' ? item.href.trim() : '';
+      const enabled = typeof item.enabled === 'boolean' ? item.enabled : Boolean(href);
+      seenSocials.add(id);
+      socials.push({
+        id,
+        label:
+          typeof item.label === 'string' && item.label.trim()
+            ? item.label.trim()
+            : PLATFORM_LABEL_MAP.get(id) || id,
+        href,
+        enabled,
+      });
     });
   }
-
-  const socials: AboutSocialLink[] = DEFAULT_SOCIAL_LINKS.map((def) => {
-    const match = incomingMap.get(def.id);
-    return {
-      id: def.id,
-      label: typeof match?.label === 'string' && match.label.trim() ? match.label.trim() : def.label,
-      href: typeof match?.href === 'string' ? match.href.trim() : def.href,
-      enabled: typeof match?.enabled === 'boolean' ? match.enabled : def.enabled,
-    };
-  });
 
   return {
     ceo,
     team,
     socials,
-    updatedAt: typeof raw?.updatedAt === 'string' ? raw.updatedAt : '',
-    updatedBy: typeof raw?.updatedBy === 'string' ? raw.updatedBy : undefined,
+    updatedAt: typeof raw.updatedAt === 'string' ? raw.updatedAt : '',
+    updatedBy: typeof raw.updatedBy === 'string' ? raw.updatedBy : undefined,
   };
 }
 
 export function loadCachedAboutConfig(): AboutAppConfig {
   try {
+    localStorage.removeItem(LEGACY_CACHE_KEY);
     const raw = localStorage.getItem(ABOUT_CONFIG_CACHE_KEY);
-    if (!raw) return DEFAULT_ABOUT_CONFIG;
+    if (!raw) return EMPTY_ABOUT_CONFIG;
     return normalizeAboutConfig(JSON.parse(raw) as Partial<AboutAppConfig>);
   } catch {
-    return DEFAULT_ABOUT_CONFIG;
+    return EMPTY_ABOUT_CONFIG;
   }
 }
 
@@ -150,6 +118,71 @@ function cacheAboutConfig(config: AboutAppConfig): void {
   }
 }
 
+async function cacheRemoteImageAsDataUrl(src: string): Promise<string> {
+  const trimmed = src.trim();
+  if (!trimmed || trimmed.startsWith('data:') || typeof window === 'undefined') {
+    return trimmed;
+  }
+  try {
+    const res = await fetch(trimmed, { mode: 'cors' });
+    if (!res.ok) return trimmed;
+    const blob = await res.blob();
+    if (!blob.type.startsWith('image/')) return trimmed;
+
+    return await new Promise<string>((resolve) => {
+      const reader = new FileReader();
+      reader.onerror = () => resolve(trimmed);
+      reader.onload = () => {
+        const dataUrl = String(reader.result || '');
+        const img = new Image();
+        img.onerror = () => resolve(trimmed);
+        img.onload = () => {
+          const maxSide = 360;
+          const scale = Math.min(maxSide / img.width, maxSide / img.height, 1);
+          const w = Math.max(1, Math.round(img.width * scale));
+          const h = Math.max(1, Math.round(img.height * scale));
+          const canvas = document.createElement('canvas');
+          canvas.width = w;
+          canvas.height = h;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            resolve(trimmed);
+            return;
+          }
+          ctx.drawImage(img, 0, 0, w, h);
+          resolve(canvas.toDataURL('image/jpeg', 0.78));
+        };
+        img.src = dataUrl;
+      };
+      reader.readAsDataURL(blob);
+    });
+  } catch {
+    return trimmed;
+  }
+}
+
+async function buildOfflineCachedConfig(config: AboutAppConfig): Promise<AboutAppConfig> {
+  const cachedCeo = config.ceo
+    ? {
+        ...config.ceo,
+        image: await cacheRemoteImageAsDataUrl(config.ceo.image),
+      }
+    : null;
+
+  const cachedTeam = await Promise.all(
+    config.team.map(async (member) => ({
+      ...member,
+      image: await cacheRemoteImageAsDataUrl(member.image),
+    }))
+  );
+
+  return {
+    ...config,
+    ceo: cachedCeo,
+    team: cachedTeam,
+  };
+}
+
 export function subscribeAboutAppConfig(
   onConfig: (config: AboutAppConfig) => void
 ): () => void {
@@ -158,6 +191,8 @@ export function subscribeAboutAppConfig(
     return () => {};
   }
 
+  let active = true;
+
   try {
     const db = getFirestore(firebaseApp);
     const configRef = doc(db, 'app_config', 'about_app');
@@ -165,15 +200,24 @@ export function subscribeAboutAppConfig(
     return onSnapshot(
       configRef,
       (snapshot) => {
+        if (!active) return;
         if (snapshot.exists()) {
           const normalized = normalizeAboutConfig(snapshot.data() as Partial<AboutAppConfig>);
           cacheAboutConfig(normalized);
           onConfig(normalized);
+
+          // Convert any external photo URLs into offline data URLs in localStorage cache
+          void buildOfflineCachedConfig(normalized).then((offlineReady) => {
+            if (!active) return;
+            cacheAboutConfig(offlineReady);
+          });
         } else {
-          onConfig(loadCachedAboutConfig());
+          cacheAboutConfig(EMPTY_ABOUT_CONFIG);
+          onConfig(EMPTY_ABOUT_CONFIG);
         }
       },
       () => {
+        if (!active) return;
         onConfig(loadCachedAboutConfig());
       }
     );
@@ -201,12 +245,14 @@ export async function saveAboutAppConfig(
   });
 
   const payload = {
-    ceo: {
-      id: normalized.ceo.id,
-      name: normalized.ceo.name,
-      role: normalized.ceo.role,
-      image: normalized.ceo.image,
-    },
+    ceo: normalized.ceo
+      ? {
+          id: normalized.ceo.id,
+          name: normalized.ceo.name,
+          role: normalized.ceo.role,
+          image: normalized.ceo.image,
+        }
+      : null,
     team: normalized.team.map((m) => ({
       id: m.id,
       name: m.name,
@@ -230,7 +276,7 @@ export async function saveAboutAppConfig(
 
   const db = getFirestore(firebaseApp);
   const configRef = doc(db, 'app_config', 'about_app');
-  await setDoc(configRef, payload, { merge: true });
+  await setDoc(configRef, payload);
   cacheAboutConfig(normalized);
   return normalized;
 }

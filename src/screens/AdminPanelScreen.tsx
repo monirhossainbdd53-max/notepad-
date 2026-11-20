@@ -1,5 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
+  ArrowDown,
+  ArrowUp,
   CheckCircle2,
   ChevronLeft,
   Clock,
@@ -14,11 +16,15 @@ import {
   ShieldAlert,
   ShieldCheck,
   Trash2,
+  User,
   Users,
   X,
 } from 'lucide-react';
 import { useNotes } from '../context/NotesContext';
-import { compressTeamPhotoFile } from '../services/aboutAppService';
+import {
+  compressTeamPhotoFile,
+  SOCIAL_PLATFORM_OPTIONS,
+} from '../services/aboutAppService';
 import { getPreviewDurationMs } from '../services/adminConfigService';
 import {
   buildSupportReplyMailto,
@@ -28,6 +34,7 @@ import {
 import {
   AboutSocialLink,
   AboutTeamMember,
+  SocialPlatformId,
   SupportMessage,
 } from '../types/notes';
 import { formatFullDate, generateId } from '../utils/noteHelpers';
@@ -60,9 +67,10 @@ export function AdminPanelScreen() {
   const [minutes, setMinutes] = useState<string>(String(previewConfig.minutes));
   const [seconds, setSeconds] = useState<string>(String(previewConfig.seconds));
 
-  const [ceoDraft, setCeoDraft] = useState<AboutTeamMember>(aboutConfig.ceo);
+  const [ceoDraft, setCeoDraft] = useState<AboutTeamMember | null>(aboutConfig.ceo);
   const [teamDraft, setTeamDraft] = useState<AboutTeamMember[]>(aboutConfig.team);
   const [socialsDraft, setSocialsDraft] = useState<AboutSocialLink[]>(aboutConfig.socials);
+  const [selectedSocialToAdd, setSelectedSocialToAdd] = useState<SocialPlatformId>('facebook');
 
   const [supportTickets, setSupportTickets] = useState<SupportMessage[]>([]);
   const [supportSyncError, setSupportSyncError] = useState<string | null>(null);
@@ -206,6 +214,40 @@ export function AdminPanelScreen() {
     }
   };
 
+  const availableSocialOptions = SOCIAL_PLATFORM_OPTIONS.filter(
+    (opt) => !socialsDraft.some((s) => s.id === opt.id)
+  );
+
+  const handleAddSocialLink = () => {
+    const targetId = availableSocialOptions.some((o) => o.id === selectedSocialToAdd)
+      ? selectedSocialToAdd
+      : availableSocialOptions[0]?.id;
+    const opt = SOCIAL_PLATFORM_OPTIONS.find((o) => o.id === targetId);
+    if (!opt) return;
+    setSocialsDraft((prev) => [
+      ...prev,
+      {
+        id: opt.id,
+        label: opt.label,
+        href: '',
+        enabled: true,
+      },
+    ]);
+    const remaining = availableSocialOptions.filter((o) => o.id !== opt.id);
+    if (remaining[0]) {
+      setSelectedSocialToAdd(remaining[0].id);
+    }
+  };
+
+  const handleAddCeo = () => {
+    setCeoDraft({
+      id: 'ceo',
+      name: '',
+      role: 'Founder & CEO',
+      image: '',
+    });
+  };
+
   const handleAddTeamMember = () => {
     setTeamDraft((prev) => [
       ...prev,
@@ -213,9 +255,20 @@ export function AdminPanelScreen() {
         id: generateId('member'),
         name: '',
         role: '',
-        image: aboutConfig.ceo.image,
+        image: '',
       },
     ]);
+  };
+
+  const handleMoveTeamMember = (index: number, direction: -1 | 1) => {
+    const target = index + direction;
+    if (target < 0 || target >= teamDraft.length) return;
+    setTeamDraft((prev) => {
+      const next = [...prev];
+      const [moved] = next.splice(index, 1);
+      next.splice(target, 0, moved);
+      return next;
+    });
   };
 
   const handleSaveAboutApp = async (e: React.FormEvent) => {
@@ -571,58 +624,219 @@ export function AdminPanelScreen() {
             <form onSubmit={handleSaveAboutApp} className="space-y-6">
               {/* Social Media Controls */}
               <div className="rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] p-5 space-y-3.5">
-                <p className="text-sm font-semibold">Social Media Links</p>
-                <div className="divide-y divide-[var(--divider)]">
-                  {socialsDraft.map((item, idx) => (
-                    <div key={item.id} className="py-3 first:pt-1 last:pb-1 space-y-2">
-                      <div className="flex items-center justify-between gap-3">
-                        <span className="text-xs font-semibold text-[var(--text-primary)]">
-                          {item.label}
-                        </span>
-                        <button
-                          type="button"
-                          role="switch"
-                          aria-checked={item.enabled}
-                          onClick={() =>
-                            setSocialsDraft((prev) =>
-                              prev.map((s, i) =>
-                                i === idx ? { ...s, enabled: !s.enabled } : s
-                              )
-                            )
-                          }
-                          className={`relative h-6 w-11 shrink-0 rounded-full transition-colors cursor-pointer ${
-                            item.enabled ? 'bg-[var(--accent-primary)]' : 'bg-[var(--divider)]'
-                          }`}
-                        >
-                          <span
-                            className={`absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white transition-transform ${
-                              item.enabled ? 'translate-x-5' : 'translate-x-0'
-                            }`}
-                          />
-                        </button>
-                      </div>
-                      <input
-                        type="url"
-                        value={item.href}
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          setSocialsDraft((prev) =>
-                            prev.map((s, i) => (i === idx ? { ...s, href: val } : s))
-                          );
-                        }}
-                        placeholder={`${item.label} URL (https://...)`}
-                        aria-label={`${item.label} URL`}
-                        className="w-full min-h-[42px] rounded-xl bg-[var(--bg-canvas)] border border-[var(--divider)] px-3.5 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-primary)]"
-                      />
+                <div className="flex flex-wrap items-center justify-between gap-2.5">
+                  <p className="text-sm font-semibold">Social Media Links</p>
+                  {availableSocialOptions.length > 0 && (
+                    <div className="flex items-center gap-2">
+                      <select
+                        value={
+                          availableSocialOptions.some((o) => o.id === selectedSocialToAdd)
+                            ? selectedSocialToAdd
+                            : availableSocialOptions[0].id
+                        }
+                        onChange={(e) =>
+                          setSelectedSocialToAdd(e.target.value as SocialPlatformId)
+                        }
+                        aria-label="Select social platform"
+                        className="min-h-[36px] rounded-xl bg-[var(--bg-canvas)] border border-[var(--divider)] px-3 text-xs font-medium text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent-primary)]"
+                      >
+                        {availableSocialOptions.map((opt) => (
+                          <option key={opt.id} value={opt.id}>
+                            {opt.label}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        onClick={handleAddSocialLink}
+                        className="inline-flex min-h-[36px] items-center gap-1 rounded-xl bg-[var(--accent-soft)] px-3 text-xs font-semibold text-[var(--accent-primary)] cursor-pointer"
+                      >
+                        <Plus className="h-3.5 w-3.5" strokeWidth={2.2} />
+                        Add
+                      </button>
                     </div>
-                  ))}
+                  )}
                 </div>
+
+                {socialsDraft.length === 0 ? (
+                  <div className="rounded-xl bg-[var(--bg-canvas)] border border-[var(--divider)] p-4 text-center text-xs text-[var(--text-secondary)]">
+                    No social media links added yet
+                  </div>
+                ) : (
+                  <div className="divide-y divide-[var(--divider)]">
+                    {socialsDraft.map((item, idx) => {
+                      const optMeta = SOCIAL_PLATFORM_OPTIONS.find((o) => o.id === item.id);
+                      return (
+                        <div key={item.id} className="py-3 first:pt-1 last:pb-1 space-y-2">
+                          <div className="flex items-center justify-between gap-3">
+                            <span className="text-xs font-semibold text-[var(--text-primary)]">
+                              {item.label}
+                            </span>
+                            <div className="flex items-center gap-2.5">
+                              <button
+                                type="button"
+                                role="switch"
+                                aria-checked={item.enabled}
+                                onClick={() =>
+                                  setSocialsDraft((prev) =>
+                                    prev.map((s, i) =>
+                                      i === idx ? { ...s, enabled: !s.enabled } : s
+                                    )
+                                  )
+                                }
+                                className={`relative h-6 w-11 shrink-0 rounded-full transition-colors cursor-pointer ${
+                                  item.enabled ? 'bg-[var(--accent-primary)]' : 'bg-[var(--divider)]'
+                                }`}
+                              >
+                                <span
+                                  className={`absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white transition-transform ${
+                                    item.enabled ? 'translate-x-5' : 'translate-x-0'
+                                  }`}
+                                />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setSocialsDraft((prev) => prev.filter((_, i) => i !== idx))
+                                }
+                                aria-label={`Remove ${item.label}`}
+                                className="min-h-[32px] min-w-[32px] flex items-center justify-center rounded-lg bg-[#E45B5B]/10 text-[#E45B5B] cursor-pointer"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" strokeWidth={2} />
+                              </button>
+                            </div>
+                          </div>
+                          <input
+                            type="url"
+                            value={item.href}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setSocialsDraft((prev) =>
+                                prev.map((s, i) => (i === idx ? { ...s, href: val } : s))
+                              );
+                            }}
+                            placeholder={optMeta?.placeholder || `${item.label} URL`}
+                            aria-label={`${item.label} URL`}
+                            className="w-full min-h-[42px] rounded-xl bg-[var(--bg-canvas)] border border-[var(--divider)] px-3.5 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-primary)]"
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
 
-              {/* Leadership & Team Controls */}
+              {/* Leadership: CEO (Top Card) */}
               <div className="rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] p-5 space-y-4">
                 <div className="flex items-center justify-between gap-3">
-                  <p className="text-sm font-semibold">Leadership & Team</p>
+                  <p className="text-sm font-semibold">CEO (Top Profile)</p>
+                  {!ceoDraft && (
+                    <button
+                      type="button"
+                      onClick={handleAddCeo}
+                      className="inline-flex min-h-[36px] items-center gap-1.5 rounded-xl bg-[var(--accent-soft)] px-3 text-xs font-semibold text-[var(--accent-primary)] cursor-pointer"
+                    >
+                      <Plus className="h-3.5 w-3.5" strokeWidth={2.2} />
+                      Add CEO
+                    </button>
+                  )}
+                </div>
+
+                {!ceoDraft ? (
+                  <div className="rounded-xl bg-[var(--bg-canvas)] border border-[var(--divider)] p-4 text-center text-xs text-[var(--text-secondary)]">
+                    No CEO profile added yet
+                  </div>
+                ) : (
+                  <div className="rounded-2xl bg-[var(--bg-canvas)] border border-[var(--divider)] p-4 space-y-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-3.5">
+                        <div className="h-16 w-14 shrink-0 overflow-hidden rounded-xl border border-[var(--divider)] bg-[var(--bg-subtle)] flex items-center justify-center">
+                          {ceoDraft.image ? (
+                            <img
+                              src={ceoDraft.image}
+                              alt={ceoDraft.name || 'CEO'}
+                              referrerPolicy="no-referrer"
+                              className="h-full w-full object-cover object-top"
+                            />
+                          ) : (
+                            <User className="h-6 w-6 text-[var(--text-secondary)] opacity-60" strokeWidth={1.75} />
+                          )}
+                        </div>
+                        <label className="inline-flex min-h-[38px] items-center gap-2 rounded-xl border border-[var(--divider)] bg-[var(--bg-card)] px-3.5 text-xs font-semibold text-[var(--text-primary)] hover:bg-[var(--bg-subtle)] transition-colors cursor-pointer">
+                          <ImagePlus className="h-3.5 w-3.5" />
+                          <span>{ceoDraft.image ? 'Change Photo' : 'Upload Photo'}</span>
+                          <input
+                            type="file"
+                            accept="image/*"
+                            className="hidden"
+                            onChange={(e) => {
+                              const file = e.target.files?.[0];
+                              e.target.value = '';
+                              void handlePhotoUpload(file, (url) =>
+                                setCeoDraft((prev) => (prev ? { ...prev, image: url } : prev))
+                              );
+                            }}
+                          />
+                        </label>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => setCeoDraft(null)}
+                        aria-label="Remove CEO"
+                        className="min-h-[36px] min-w-[36px] flex items-center justify-center rounded-xl bg-[#E45B5B]/10 text-[#E45B5B] cursor-pointer"
+                      >
+                        <Trash2 className="h-4 w-4" strokeWidth={2} />
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                      <input
+                        type="text"
+                        value={ceoDraft.name}
+                        onChange={(e) =>
+                          setCeoDraft((prev) =>
+                            prev ? { ...prev, name: e.target.value } : prev
+                          )
+                        }
+                        placeholder="CEO name"
+                        aria-label="CEO Name"
+                        className="w-full min-h-[42px] rounded-xl bg-[var(--bg-card)] border border-[var(--divider)] px-3.5 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-primary)]"
+                      />
+                      <input
+                        type="text"
+                        value={ceoDraft.role}
+                        onChange={(e) =>
+                          setCeoDraft((prev) =>
+                            prev ? { ...prev, role: e.target.value } : prev
+                          )
+                        }
+                        placeholder="Role / Title"
+                        aria-label="CEO Role"
+                        className="w-full min-h-[42px] rounded-xl bg-[var(--bg-card)] border border-[var(--divider)] px-3.5 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-primary)]"
+                      />
+                    </div>
+
+                    <input
+                      type="url"
+                      value={ceoDraft.image.startsWith('data:') ? '' : ceoDraft.image}
+                      onChange={(e) =>
+                        setCeoDraft((prev) =>
+                          prev ? { ...prev, image: e.target.value } : prev
+                        )
+                      }
+                      placeholder="Photo URL (optional)"
+                      aria-label="CEO Photo URL"
+                      className="w-full min-h-[42px] rounded-xl bg-[var(--bg-card)] border border-[var(--divider)] px-3.5 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-primary)]"
+                    />
+                  </div>
+                )}
+              </div>
+
+              {/* Team Members Controls (Sequential Grid Below CEO) */}
+              <div className="rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] p-5 space-y-4">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-sm font-semibold">Team Members</p>
                   <button
                     type="button"
                     onClick={handleAddTeamMember}
@@ -633,162 +847,131 @@ export function AdminPanelScreen() {
                   </button>
                 </div>
 
-                {/* Founder / CEO Card */}
-                <div className="rounded-2xl bg-[var(--bg-canvas)] border border-[var(--divider)] p-4 space-y-3">
-                  <div className="flex items-center gap-3.5">
-                    <img
-                      src={ceoDraft.image}
-                      alt={ceoDraft.name || 'Founder'}
-                      referrerPolicy="no-referrer"
-                      className="h-16 w-14 shrink-0 rounded-xl object-cover object-top border border-[var(--divider)] bg-[var(--bg-subtle)]"
-                    />
-                    <label className="inline-flex min-h-[38px] items-center gap-2 rounded-xl border border-[var(--divider)] bg-[var(--bg-card)] px-3.5 text-xs font-semibold text-[var(--text-primary)] hover:bg-[var(--bg-subtle)] transition-colors cursor-pointer">
-                      <ImagePlus className="h-3.5 w-3.5" />
-                      <span>Change Photo</span>
-                      <input
-                        type="file"
-                        accept="image/*"
-                        className="hidden"
-                        onChange={(e) => {
-                          const file = e.target.files?.[0];
-                          e.target.value = '';
-                          void handlePhotoUpload(file, (url) =>
-                            setCeoDraft((prev) => ({ ...prev, image: url }))
-                          );
-                        }}
-                      />
-                    </label>
+                {teamDraft.length === 0 ? (
+                  <div className="rounded-xl bg-[var(--bg-canvas)] border border-[var(--divider)] p-4 text-center text-xs text-[var(--text-secondary)]">
+                    No team members added yet
                   </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                    <input
-                      type="text"
-                      value={ceoDraft.name}
-                      onChange={(e) =>
-                        setCeoDraft((prev) => ({ ...prev, name: e.target.value }))
-                      }
-                      placeholder="Full name"
-                      aria-label="CEO Name"
-                      className="w-full min-h-[42px] rounded-xl bg-[var(--bg-card)] border border-[var(--divider)] px-3.5 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-primary)]"
-                    />
-                    <input
-                      type="text"
-                      value={ceoDraft.role}
-                      onChange={(e) =>
-                        setCeoDraft((prev) => ({ ...prev, role: e.target.value }))
-                      }
-                      placeholder="Role / Title"
-                      aria-label="CEO Role"
-                      className="w-full min-h-[42px] rounded-xl bg-[var(--bg-card)] border border-[var(--divider)] px-3.5 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-primary)]"
-                    />
-                  </div>
-
-                  <input
-                    type="url"
-                    value={ceoDraft.image.startsWith('data:') ? '' : ceoDraft.image}
-                    onChange={(e) =>
-                      setCeoDraft((prev) => ({ ...prev, image: e.target.value }))
-                    }
-                    placeholder="Photo URL (optional)"
-                    aria-label="CEO Photo URL"
-                    className="w-full min-h-[42px] rounded-xl bg-[var(--bg-card)] border border-[var(--divider)] px-3.5 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-primary)]"
-                  />
-                </div>
-
-                {/* Dynamic Team Members List */}
-                <div className="space-y-3">
-                  {teamDraft.map((member, idx) => (
-                    <div
-                      key={member.id}
-                      className="rounded-2xl bg-[var(--bg-canvas)] border border-[var(--divider)] p-4 space-y-3"
-                    >
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="flex items-center gap-3">
-                          <img
-                            src={member.image}
-                            alt={member.name || 'Member'}
-                            referrerPolicy="no-referrer"
-                            className="h-14 w-12 shrink-0 rounded-xl object-cover object-top border border-[var(--divider)] bg-[var(--bg-subtle)]"
-                          />
-                          <label className="inline-flex min-h-[36px] items-center gap-1.5 rounded-xl border border-[var(--divider)] bg-[var(--bg-card)] px-3 text-xs font-semibold text-[var(--text-primary)] hover:bg-[var(--bg-subtle)] transition-colors cursor-pointer">
-                            <ImagePlus className="h-3.5 w-3.5" />
-                            <span>Photo</span>
-                            <input
-                              type="file"
-                              accept="image/*"
-                              className="hidden"
-                              onChange={(e) => {
-                                const file = e.target.files?.[0];
-                                e.target.value = '';
-                                void handlePhotoUpload(file, (url) =>
-                                  setTeamDraft((prev) =>
-                                    prev.map((m, i) =>
-                                      i === idx ? { ...m, image: url } : m
+                ) : (
+                  <div className="space-y-3">
+                    {teamDraft.map((member, idx) => (
+                      <div
+                        key={member.id}
+                        className="rounded-2xl bg-[var(--bg-canvas)] border border-[var(--divider)] p-4 space-y-3"
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="flex items-center gap-3">
+                            <div className="h-14 w-12 shrink-0 overflow-hidden rounded-xl border border-[var(--divider)] bg-[var(--bg-subtle)] flex items-center justify-center">
+                              {member.image ? (
+                                <img
+                                  src={member.image}
+                                  alt={member.name || 'Member'}
+                                  referrerPolicy="no-referrer"
+                                  className="h-full w-full object-cover object-top"
+                                />
+                              ) : (
+                                <User className="h-5 w-5 text-[var(--text-secondary)] opacity-60" strokeWidth={1.75} />
+                              )}
+                            </div>
+                            <label className="inline-flex min-h-[36px] items-center gap-1.5 rounded-xl border border-[var(--divider)] bg-[var(--bg-card)] px-3 text-xs font-semibold text-[var(--text-primary)] hover:bg-[var(--bg-subtle)] transition-colors cursor-pointer">
+                              <ImagePlus className="h-3.5 w-3.5" />
+                              <span>{member.image ? 'Change Photo' : 'Upload Photo'}</span>
+                              <input
+                                type="file"
+                                accept="image/*"
+                                className="hidden"
+                                onChange={(e) => {
+                                  const file = e.target.files?.[0];
+                                  e.target.value = '';
+                                  void handlePhotoUpload(file, (url) =>
+                                    setTeamDraft((prev) =>
+                                      prev.map((m, i) =>
+                                        i === idx ? { ...m, image: url } : m
+                                      )
                                     )
-                                  )
-                                );
-                              }}
-                            />
-                          </label>
+                                  );
+                                }}
+                              />
+                            </label>
+                          </div>
+
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              disabled={idx === 0}
+                              onClick={() => handleMoveTeamMember(idx, -1)}
+                              aria-label="Move up"
+                              className="min-h-[34px] min-w-[34px] flex items-center justify-center rounded-xl border border-[var(--divider)] bg-[var(--bg-card)] text-[var(--text-secondary)] disabled:opacity-35 cursor-pointer"
+                            >
+                              <ArrowUp className="h-3.5 w-3.5" strokeWidth={2} />
+                            </button>
+                            <button
+                              type="button"
+                              disabled={idx === teamDraft.length - 1}
+                              onClick={() => handleMoveTeamMember(idx, 1)}
+                              aria-label="Move down"
+                              className="min-h-[34px] min-w-[34px] flex items-center justify-center rounded-xl border border-[var(--divider)] bg-[var(--bg-card)] text-[var(--text-secondary)] disabled:opacity-35 cursor-pointer"
+                            >
+                              <ArrowDown className="h-3.5 w-3.5" strokeWidth={2} />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setTeamDraft((prev) => prev.filter((_, i) => i !== idx))
+                              }
+                              aria-label="Remove team member"
+                              className="min-h-[34px] min-w-[34px] flex items-center justify-center rounded-xl bg-[#E45B5B]/10 text-[#E45B5B] cursor-pointer"
+                            >
+                              <Trash2 className="h-4 w-4" strokeWidth={2} />
+                            </button>
+                          </div>
                         </div>
 
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setTeamDraft((prev) => prev.filter((_, i) => i !== idx))
-                          }
-                          aria-label="Remove team member"
-                          className="min-h-[36px] min-w-[36px] flex items-center justify-center rounded-xl bg-[#E45B5B]/10 text-[#E45B5B] cursor-pointer"
-                        >
-                          <Trash2 className="h-4 w-4" strokeWidth={2} />
-                        </button>
-                      </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                          <input
+                            type="text"
+                            value={member.name}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setTeamDraft((prev) =>
+                                prev.map((m, i) => (i === idx ? { ...m, name: val } : m))
+                              );
+                            }}
+                            placeholder="Member name"
+                            aria-label="Member name"
+                            className="w-full min-h-[42px] rounded-xl bg-[var(--bg-card)] border border-[var(--divider)] px-3.5 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-primary)]"
+                          />
+                          <input
+                            type="text"
+                            value={member.role}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setTeamDraft((prev) =>
+                                prev.map((m, i) => (i === idx ? { ...m, role: val } : m))
+                              );
+                            }}
+                            placeholder="Role / Title"
+                            aria-label="Member role"
+                            className="w-full min-h-[42px] rounded-xl bg-[var(--bg-card)] border border-[var(--divider)] px-3.5 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-primary)]"
+                          />
+                        </div>
 
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                         <input
-                          type="text"
-                          value={member.name}
+                          type="url"
+                          value={member.image.startsWith('data:') ? '' : member.image}
                           onChange={(e) => {
                             const val = e.target.value;
                             setTeamDraft((prev) =>
-                              prev.map((m, i) => (i === idx ? { ...m, name: val } : m))
+                              prev.map((m, i) => (i === idx ? { ...m, image: val } : m))
                             );
                           }}
-                          placeholder="Member name"
-                          aria-label="Member name"
-                          className="w-full min-h-[42px] rounded-xl bg-[var(--bg-card)] border border-[var(--divider)] px-3.5 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-primary)]"
-                        />
-                        <input
-                          type="text"
-                          value={member.role}
-                          onChange={(e) => {
-                            const val = e.target.value;
-                            setTeamDraft((prev) =>
-                              prev.map((m, i) => (i === idx ? { ...m, role: val } : m))
-                            );
-                          }}
-                          placeholder="Role / Title"
-                          aria-label="Member role"
+                          placeholder="Photo URL (optional)"
+                          aria-label="Member photo URL"
                           className="w-full min-h-[42px] rounded-xl bg-[var(--bg-card)] border border-[var(--divider)] px-3.5 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-primary)]"
                         />
                       </div>
-
-                      <input
-                        type="url"
-                        value={member.image.startsWith('data:') ? '' : member.image}
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          setTeamDraft((prev) =>
-                            prev.map((m, i) => (i === idx ? { ...m, image: val } : m))
-                          );
-                        }}
-                        placeholder="Photo URL (optional)"
-                        aria-label="Member photo URL"
-                        className="w-full min-h-[42px] rounded-xl bg-[var(--bg-card)] border border-[var(--divider)] px-3.5 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-primary)]"
-                      />
-                    </div>
-                  ))}
-                </div>
+                    ))}
+                  </div>
+                )}
               </div>
 
               <button
