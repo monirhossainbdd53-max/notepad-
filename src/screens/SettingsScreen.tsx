@@ -42,6 +42,7 @@ export function SettingsScreen() {
     notifications,
     updateNotifications,
     authLoading,
+    authError,
     driveBusy,
     billingBusy,
     signInGoogleAccount,
@@ -523,7 +524,14 @@ export function SettingsScreen() {
             </div>
 
             {isGuest ? (
-              <GoogleSignInButton onClick={signInGoogleAccount} loading={authLoading} />
+              <div className="space-y-2.5">
+                <GoogleSignInButton onClick={signInGoogleAccount} loading={authLoading} />
+                {authError && (
+                  <p className="rounded-xl bg-[#E45B5B]/10 border border-[#E45B5B]/25 px-3 py-2 text-xs text-[#C62828] dark:text-[#FCA5A5] select-text">
+                    {authError}
+                  </p>
+                )}
+              </div>
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                 <button

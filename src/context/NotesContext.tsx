@@ -153,6 +153,7 @@ interface NotesContextValue {
   account: UserAccount;
   updateAccount: (patch: Partial<UserAccount>) => void;
   authLoading: boolean;
+  authError: string | null;
   driveBusy: boolean;
   billingBusy: boolean;
   hasDriveAccess: boolean;
@@ -366,6 +367,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   const [nowMs, setNowMs] = useState<number>(() => Date.now());
   const [adminSaving, setAdminSaving] = useState(false);
   const [authLoading, setAuthLoading] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
   const [driveBusy, setDriveBusy] = useState(false);
   const [billingBusy, setBillingBusy] = useState(false);
   const [hasDriveAccess, setHasDriveAccess] = useState(false);
@@ -471,6 +473,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     const unsubscribe = initFirebaseAuth((user, hasToken) => {
       setHasDriveAccess(hasToken);
       if (user) {
+        setAuthError(null);
         setAccount((prev) => ({
           ...prev,
           uid: user.uid,
@@ -626,9 +629,10 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
 
   const signInGoogleAccount = useCallback(async () => {
     setAuthLoading(true);
+    setAuthError(null);
     try {
-      const { user } = await signInWithGoogle();
-      setHasDriveAccess(true);
+      const { user, accessToken } = await signInWithGoogle();
+      setHasDriveAccess(Boolean(accessToken));
       setAccount((prev) => ({
         ...prev,
         uid: user.uid,
@@ -646,16 +650,16 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         errObj?.code === 'USER_CANCELLED' ||
         rawMsg.includes('popup-closed') ||
         rawMsg.includes('cancel');
-      const detail = errObj?.code || errObj?.message || '';
-      const shortDetail = detail.length > 72 ? `${detail.slice(0, 72)}...` : detail;
-      showToast(
-        isCancelled
-          ? 'Sign-in cancelled'
-          : shortDetail
-            ? `Sign-in failed: ${shortDetail}`
-            : 'Could not sign in with Google',
-        'danger'
-      );
+      const detail = errObj?.message || errObj?.code || '';
+      if (isCancelled) {
+        setAuthError(null);
+        showToast('Sign-in cancelled', 'danger');
+      } else {
+        const message = detail || 'Could not sign in with Google';
+        setAuthError(message);
+        const shortDetail = message.length > 72 ? `${message.slice(0, 72)}...` : message;
+        showToast(`Sign-in failed: ${shortDetail}`, 'danger');
+      }
     } finally {
       setAuthLoading(false);
     }
@@ -663,6 +667,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
 
   const signOutGoogleAccount = useCallback(async () => {
     try {
+      setAuthError(null);
       await signOutGoogle();
       setHasDriveAccess(false);
       setAccount(INITIAL_ACCOUNT);
@@ -1609,6 +1614,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     account,
     updateAccount,
     authLoading,
+    authError,
     driveBusy,
     billingBusy,
     hasDriveAccess,

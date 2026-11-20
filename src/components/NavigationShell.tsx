@@ -107,7 +107,7 @@ export function NavigationShell({
             className="flex items-center gap-2.5 text-left cursor-pointer"
           >
             <img
-              src="/assets/aistudio/29d87ee3-5f06-40b0-be78-ca717d4901fe-removebg-preview_676c1b01.png"
+              src="/assets/aistudio/Applogo.png"
               alt="Notes"
               referrerPolicy="no-referrer"
               className="h-8 w-8 object-contain shrink-0"

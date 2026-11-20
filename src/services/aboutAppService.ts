@@ -6,7 +6,7 @@ import {
   SocialPlatformId,
 } from '../types/notes';
 import { ADMIN_EMAIL, FirestoreSyncState } from './adminConfigService';
-import { auth, db, isFirebaseConfigured } from './googleAuthDrive';
+import { auth, db, diagnoseFirestoreTimeout, isFirebaseConfigured } from './googleAuthDrive';
 
 const ABOUT_CONFIG_CACHE_KEY = 'notes_about_app_config_cache_v2';
 const LEGACY_CACHE_KEY = 'notes_about_app_config_cache_v1';
@@ -305,15 +305,11 @@ export async function saveAboutAppConfig(
   await Promise.race([
     setDoc(configRef, payload),
     new Promise<never>((_, reject) =>
-      setTimeout(
-        () =>
-          reject(
-            new Error(
-              'Save timed out. Check your internet connection and Firebase Firestore Rules.'
-            )
-          ),
-        15000
-      )
+      setTimeout(() => {
+        void diagnoseFirestoreTimeout('app_config/about_app').then((reason) =>
+          reject(new Error(reason))
+        );
+      }, 12000)
     ),
   ]);
   cacheAboutConfig(normalized);

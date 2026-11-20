@@ -69,6 +69,7 @@ export function PremiumScreen() {
     activeNotes,
     folders,
     authLoading,
+    authError,
     billingBusy,
     signInGoogleAccount,
     restorePurchase,
@@ -339,6 +340,11 @@ export function PremiumScreen() {
                 loading={authLoading}
                 label="Sign in with Google for receipt"
               />
+              {authError && (
+                <p className="rounded-xl bg-[#E45B5B]/10 border border-[#E45B5B]/25 px-3 py-2 text-xs text-[#C62828] dark:text-[#FCA5A5] select-text">
+                  {authError}
+                </p>
+              )}
               <input
                 type="email"
                 value={receiptEmail}

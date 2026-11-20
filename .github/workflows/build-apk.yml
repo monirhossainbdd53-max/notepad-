@@ -127,7 +127,7 @@ jobs:
 
       - name: Apply Android launcher icon
         run: |
-          LOGO="public/assets/aistudio/29d87ee3-5f06-40b0-be78-ca717d4901fe-removebg-preview_676c1b01.png"
+          LOGO="public/assets/aistudio/Applogo.png"
           if [ -f "$LOGO" ]; then
             if ! command -v convert >/dev/null 2>&1 && ! command -v magick >/dev/null 2>&1; then
               sudo apt-get update -qq || true

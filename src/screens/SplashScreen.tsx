@@ -1,8 +1,7 @@
 import React from 'react';
 import { useNotes } from '../context/NotesContext';
 
-const APP_LOGO_SRC =
-  '/assets/aistudio/29d87ee3-5f06-40b0-be78-ca717d4901fe-removebg-preview_676c1b01.png';
+const APP_LOGO_SRC = '/assets/aistudio/Applogo.png';
 
 export function SplashScreen() {
   const { navigate, completeOnboarding } = useNotes();

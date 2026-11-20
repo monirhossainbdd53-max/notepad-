@@ -1,11 +1,12 @@
 {
   "projectId": "noted-b545a",
-  "appId": "1:738224510619:android:3b52bf42ca35f54c0cd83e",
-  "apiKey": "AIzaSyCtwkhbjmDFbl6rXnTcttC7RE1pkG485aE",
+  "appId": "1:738224510619:web:820c2fcf63e8b5f70cd83e",
+  "apiKey": "AIzaSyBrTSUduniDnMS42ep-hyaROghR1_qb7t0",
   "authDomain": "noted-b545a.firebaseapp.com",
   "storageBucket": "noted-b545a.firebasestorage.app",
   "messagingSenderId": "738224510619",
-  "measurementId": "",
+  "measurementId": "G-YNZH9E1P2J",
   "oAuthClientId": "738224510619-fm55d4ovomgnqrh59tv1bbg0jcjlnq1k.apps.googleusercontent.com",
-  "recaptchaSiteKey": ""
+  "recaptchaSiteKey": "",
+  "firestoreDatabaseId": "default"
 }

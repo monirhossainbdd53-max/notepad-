@@ -98,7 +98,7 @@ export function AboutAppScreen() {
         {/* Natural Centered Brand Card */}
         <div className="rounded-3xl bg-[var(--bg-card)] border border-[var(--divider)] py-4 px-5 flex flex-col items-center text-center">
           <img
-            src="/assets/aistudio/29d87ee3-5f06-40b0-be78-ca717d4901fe-removebg-preview_676c1b01.png"
+            src="/assets/aistudio/Applogo.png"
             alt="Notes logo"
             referrerPolicy="no-referrer"
             className="h-14 w-14 object-contain"

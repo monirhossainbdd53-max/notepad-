@@ -1,6 +1,6 @@
 import { doc, onSnapshot, setDoc } from 'firebase/firestore';
 import { PreviewModeConfig, UserAccount } from '../types/notes';
-import { auth, db, isFirebaseConfigured } from './googleAuthDrive';
+import { auth, db, diagnoseFirestoreTimeout, isFirebaseConfigured } from './googleAuthDrive';
 
 export const ADMIN_EMAIL = 'riyadislambdd@gmail.com';
 const PREVIEW_CONFIG_CACHE_KEY = 'notes_preview_config_cache_v1';
@@ -125,10 +125,11 @@ export async function savePreviewModeConfig(
   await Promise.race([
     setDoc(configRef, normalized, { merge: true }),
     new Promise<never>((_, reject) =>
-      setTimeout(
-        () => reject(new Error('Save timed out. Check connection and Firebase Rules.')),
-        15000
-      )
+      setTimeout(() => {
+        void diagnoseFirestoreTimeout('app_config/preview_mode').then((reason) =>
+          reject(new Error(reason))
+        );
+      }, 12000)
     ),
   ]);
   cachePreviewConfig(normalized);

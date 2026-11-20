@@ -4,10 +4,12 @@ import { getApps, initializeApp } from 'firebase/app';
 import {
   Auth,
   getAuth,
+  getRedirectResult,
   GoogleAuthProvider,
   onAuthStateChanged,
   signInWithCredential,
   signInWithPopup,
+  signInWithRedirect,
   signOut,
   User,
 } from 'firebase/auth';
@@ -26,6 +28,10 @@ export const isFirebaseConfigured = Boolean(
   firebaseConfig.apiKey && firebaseConfig.projectId && firebaseConfig.appId
 );
 
+export const firestoreDatabaseId =
+  (firebaseConfig as { firestoreDatabaseId?: string }).firestoreDatabaseId?.trim() ||
+  undefined;
+
 export const firebaseApp = isFirebaseConfigured
   ? getApps().length > 0
     ? getApps()[0]
@@ -35,18 +41,53 @@ export const auth: Auth | null = firebaseApp ? getAuth(firebaseApp) : null;
 export const db: Firestore | null = firebaseApp
   ? (() => {
       try {
-        return initializeFirestore(firebaseApp, {
-          experimentalAutoDetectLongPolling: true,
-        });
+        return initializeFirestore(
+          firebaseApp,
+          { experimentalAutoDetectLongPolling: true },
+          firestoreDatabaseId
+        );
       } catch {
-        return getFirestore(firebaseApp);
+        return firestoreDatabaseId
+          ? getFirestore(firebaseApp, firestoreDatabaseId)
+          : getFirestore(firebaseApp);
       }
     })()
   : null;
 
-const provider = new GoogleAuthProvider();
-SCOPES.forEach((scope) => provider.addScope(scope));
-provider.setCustomParameters({ prompt: 'select_account' });
+export async function diagnoseFirestoreTimeout(docPath: string): Promise<string> {
+  const dbName = firestoreDatabaseId || '(default)';
+  try {
+    const res = await fetch(
+      `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(
+        firebaseConfig.projectId
+      )}/databases/${encodeURIComponent(dbName)}/documents/${docPath}`
+    );
+    const json = (await res.json()) as { error?: { status?: string; message?: string } };
+    if (json?.error?.status === 'NOT_FOUND' && json.error.message?.includes('does not exist')) {
+      return `Firestore database "${dbName}" does not exist in project "${firebaseConfig.projectId}". Create it in Firebase Console or configure its Database ID.`;
+    }
+    if (json?.error?.status === 'PERMISSION_DENIED') {
+      return 'Permission denied by Firestore Rules. Publish the updated rules in Firebase Console.';
+    }
+    if (json?.error?.message) {
+      return json.error.message;
+    }
+  } catch {
+    // Ignore network diagnostic error
+  }
+  return 'Save timed out. Check your internet connection and Firebase Firestore Rules.';
+}
+
+function createGoogleProvider(includeDriveScope: boolean, forceConsent = false): GoogleAuthProvider {
+  const p = new GoogleAuthProvider();
+  if (includeDriveScope) {
+    SCOPES.forEach((scope) => p.addScope(scope));
+  }
+  p.setCustomParameters({
+    prompt: forceConsent ? 'consent select_account' : 'select_account',
+  });
+  return p;
+}
 
 let isSigningIn = false;
 let nativeInitialized = false;
@@ -90,6 +131,23 @@ export function initFirebaseAuth(
     onUserChange(null, false);
     return () => {};
   }
+
+  if (!isNativeApp()) {
+    void getRedirectResult(auth)
+      .then((result) => {
+        if (result) {
+          const credential = GoogleAuthProvider.credentialFromResult(result);
+          if (credential?.accessToken) {
+            cachedAccessToken = credential.accessToken;
+          }
+          onUserChange(result.user, Boolean(cachedAccessToken));
+        }
+      })
+      .catch(() => {
+        // Ignore stale redirect errors; interactive sign-in surfaces active errors
+      });
+  }
+
   return onAuthStateChanged(auth, (user) => {
     if (user) {
       onUserChange(user, Boolean(cachedAccessToken));
@@ -102,9 +160,38 @@ export function initFirebaseAuth(
   });
 }
 
+function formatBrowserAuthError(err: unknown): Error {
+  const errObj = err as { code?: string; message?: string };
+  const code = errObj?.code || '';
+  const host = typeof window !== 'undefined' ? window.location.hostname : '';
+
+  if (code === 'auth/unauthorized-domain') {
+    return new Error(
+      `Domain "${host}" is not authorized for sign-in. Add it in Firebase Console → Authentication → Settings → Authorized domains.`
+    );
+  }
+  if (code === 'auth/popup-blocked') {
+    return new Error(
+      'Sign-in popup was blocked by your browser. Allow popups for this site or open in a new tab.'
+    );
+  }
+  if (code === 'auth/operation-not-allowed') {
+    return new Error(
+      'Google Sign-In is disabled in Firebase Console → Authentication → Sign-in method.'
+    );
+  }
+  if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
+    const cancelled = new Error('Sign-in cancelled');
+    (cancelled as Error & { code?: string }).code = 'USER_CANCELLED';
+    return cancelled;
+  }
+  return err instanceof Error ? err : new Error(errObj?.message || 'Google sign-in failed');
+}
+
 export async function signInWithGoogle(
-  forceRefreshToken = false
-): Promise<{ user: User; accessToken: string }> {
+  forceRefreshToken = false,
+  requireDriveScope = false
+): Promise<{ user: User; accessToken: string | null }> {
   if (!auth) {
     throw new Error('Firebase is not configured yet');
   }
@@ -136,21 +223,35 @@ export async function signInWithGoogle(
       const credential = GoogleAuthProvider.credential(idToken);
       const userCred = await signInWithCredential(auth, credential);
 
-      if (!accessToken) {
+      if (accessToken) {
+        cachedAccessToken = accessToken;
+      } else if (requireDriveScope) {
         throw new Error('Could not obtain Google Drive access token');
       }
 
-      cachedAccessToken = accessToken;
       return { user: userCred.user, accessToken: cachedAccessToken };
     }
 
-    const result = await signInWithPopup(auth, provider);
-    const credential = GoogleAuthProvider.credentialFromResult(result);
-    if (!credential?.accessToken) {
-      throw new Error('Could not obtain Google Drive access token');
+    const webProvider = createGoogleProvider(requireDriveScope, forceRefreshToken);
+    try {
+      const result = await signInWithPopup(auth, webProvider);
+      const credential = GoogleAuthProvider.credentialFromResult(result);
+      if (credential?.accessToken) {
+        cachedAccessToken = credential.accessToken;
+      } else if (requireDriveScope) {
+        throw new Error('Could not obtain Google Drive access token');
+      }
+      return { user: result.user, accessToken: cachedAccessToken };
+    } catch (err) {
+      const code = (err as { code?: string })?.code;
+      const isTopLevelWindow =
+        typeof window !== 'undefined' && window.self === window.top;
+      if (code === 'auth/popup-blocked' && isTopLevelWindow) {
+        await signInWithRedirect(auth, webProvider);
+        return new Promise(() => {});
+      }
+      throw formatBrowserAuthError(err);
     }
-    cachedAccessToken = credential.accessToken;
-    return { user: result.user, accessToken: cachedAccessToken };
   } finally {
     isSigningIn = false;
   }
@@ -173,7 +274,10 @@ export async function signOutGoogle(): Promise<void> {
 
 export async function ensureDriveAccessToken(forceRefresh = false): Promise<string> {
   if (!forceRefresh && cachedAccessToken) return cachedAccessToken;
-  const { accessToken } = await signInWithGoogle(forceRefresh);
+  const { accessToken } = await signInWithGoogle(forceRefresh, true);
+  if (!accessToken) {
+    throw new Error('Could not obtain Google Drive access token');
+  }
   return accessToken;
 }
 
