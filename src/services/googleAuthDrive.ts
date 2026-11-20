@@ -155,10 +155,6 @@ export async function signOutGoogle(): Promise<void> {
   }
 }
 
-export function hasCachedDriveToken(): boolean {
-  return Boolean(cachedAccessToken);
-}
-
 export async function ensureDriveAccessToken(forceRefresh = false): Promise<string> {
   if (!forceRefresh && cachedAccessToken) return cachedAccessToken;
   const { accessToken } = await signInWithGoogle(forceRefresh);
@@ -192,15 +188,6 @@ async function findDriveBackupFile(accessToken: string): Promise<DriveFileSummar
   return data.files && data.files.length > 0 ? data.files[0] : null;
 }
 
-export async function getDriveBackupInfo(): Promise<DriveFileSummary | null> {
-  if (!cachedAccessToken) return null;
-  try {
-    return await findDriveBackupFile(cachedAccessToken);
-  } catch {
-    return null;
-  }
-}
-
 export async function uploadDriveBackup(payload: DriveBackupPayload): Promise<{
   fileId: string;
   modifiedTime: string;
@@ -223,7 +210,6 @@ export async function uploadDriveBackup(payload: DriveBackupPayload): Promise<{
   const metadata = {
     name: BACKUP_FILE_NAME,
     mimeType: 'application/json',
-    ...(existing ? {} : {}),
   };
 
   const multipartBody =
