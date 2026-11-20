@@ -31,7 +31,7 @@ import { Capacitor } from '@capacitor/core';
 import { SpeechRecognition as NativeSpeechRecognition } from '@capacitor-community/speech-recognition';
 import { useBackHandler, useNotes } from '../context/NotesContext';
 import { FREE_LIMITS } from '../types/notes';
-import { readAndCompressImage, stripHtmlToText } from '../utils/noteHelpers';
+import { readAndCompressImage } from '../utils/noteHelpers';
 import { TRANSLATE_LANGUAGES, translateText } from '../utils/translateHelper';
 import { SketchModal } from './SketchModal';
 
@@ -65,27 +65,6 @@ interface SpeechRecognitionInstance {
 }
 
 type SpeechRecognitionCtor = new () => SpeechRecognitionInstance;
-
-const QUICK_TEMPLATES = [
-  {
-    id: 'meeting',
-    label: 'Meeting Notes',
-    title: 'Meeting Notes',
-    html: '<p><strong>Date:</strong> </p><p><strong>Agenda:</strong></p><ul><li></li></ul><p><strong>Key Takeaways:</strong></p><ul><li></li></ul>',
-  },
-  {
-    id: 'study',
-    label: 'Study Notes',
-    title: 'Study Notes',
-    html: '<p><strong>Topic:</strong> </p><p><strong>Key Points:</strong></p><ul><li></li></ul><p><strong>Summary:</strong></p><p><br></p>',
-  },
-  {
-    id: 'grocery',
-    label: 'Grocery List',
-    title: 'Shopping List',
-    html: '<table class="note-table"><thead><tr><th>Item</th><th>Qty / Note</th></tr></thead><tbody><tr><td><br></td><td><br></td></tr><tr><td><br></td><td><br></td></tr></tbody></table><p><br></p>',
-  },
-];
 
 interface RichTextEditorProps {
   title: string;
@@ -941,13 +920,6 @@ export function RichTextEditor({
     }
   };
 
-  const handleApplyTemplate = (tpl: (typeof QUICK_TEMPLATES)[number]) => {
-    if (!editorRef.current) return;
-    onChangeTitle(tpl.title);
-    editorRef.current.innerHTML = tpl.html;
-    emitChange();
-  };
-
   const handlePremiumFormat = (label: string, action: () => void) => {
     if (!isPremium) {
       requestUpgrade(`${label} is part of Advanced Note Formatting in Notes Premium.`);
@@ -1361,25 +1333,6 @@ export function RichTextEditor({
             className="note-content min-h-[260px] text-[var(--text-primary)] focus:outline-none"
           />
         </div>
-
-        {/* Optional Quick Templates (only visible when note is completely empty) */}
-        {!title.trim() &&
-          !stripHtmlToText(content) &&
-          !content.includes('note-image-block') &&
-          !content.includes('note-table') && (
-            <div className="mt-6 flex flex-wrap items-center gap-2">
-              {QUICK_TEMPLATES.map((tpl) => (
-                <button
-                  key={tpl.id}
-                  type="button"
-                  onClick={() => handleApplyTemplate(tpl)}
-                  className="min-h-[34px] rounded-xl bg-[var(--bg-card)] border border-[var(--divider)] px-3 text-xs font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent-primary)]/60 transition-colors cursor-pointer"
-                >
-                  + {tpl.label}
-                </button>
-              ))}
-            </div>
-          )}
 
         {/* Legacy bottom attachments fallback (if any older note has note.images) */}
         {images.length > 0 && (

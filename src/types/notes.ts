@@ -92,3 +92,58 @@ export interface PreviewModeConfig {
   updatedAt: string;
   updatedBy?: string;
 }
+
+export interface AutoBackupSchedule {
+  enabled: boolean;
+  months: number;
+  days: number;
+  lastBackupAt?: string;
+  nextBackupAt?: string;
+}
+
+export interface SupportMessage {
+  id: string;
+  userEmail: string;
+  userName: string;
+  userUid?: string;
+  subject: string;
+  message: string;
+  status: 'open' | 'replied';
+  adminReply?: string;
+  repliedAt?: string;
+  repliedBy?: string;
+  emailDeliveryStatus?: 'sent' | 'mailto_fallback' | 'not_configured';
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type SocialPlatformId =
+  | 'facebook'
+  | 'whatsapp'
+  | 'instagram'
+  | 'youtube'
+  | 'x'
+  | 'linkedin'
+  | 'website';
+
+export interface AboutSocialLink {
+  id: SocialPlatformId;
+  label: string;
+  href: string;
+  enabled: boolean;
+}
+
+export interface AboutTeamMember {
+  id: string;
+  name: string;
+  role: string;
+  image: string;
+}
+
+export interface AboutAppConfig {
+  ceo: AboutTeamMember;
+  team: AboutTeamMember[];
+  socials: AboutSocialLink[];
+  updatedAt: string;
+  updatedBy?: string;
+}

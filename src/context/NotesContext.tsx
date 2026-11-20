@@ -3,11 +3,16 @@ import { App as CapApp } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
 import {
   DEFAULT_FOLDERS,
+  DEFAULT_MY_NOTES_FOLDER_ID,
+  FEATURED_STORY_NOTE_ID,
   INITIAL_ACCOUNT,
   INITIAL_NOTES,
   INITIAL_RECENT_SEARCHES,
+  createFeaturedStoryNote,
 } from '../data/initialData';
 import {
+  AboutAppConfig,
+  AutoBackupSchedule,
   FREE_LIMITS,
   Folder,
   Note,
@@ -20,6 +25,7 @@ import {
   ToastMessage,
   UserAccount,
 } from '../types/notes';
+import { exportNotesAsPdfZip } from '../utils/exportNotesZip';
 import { generateId } from '../utils/noteHelpers';
 import {
   initFirebaseAuth,
@@ -42,6 +48,11 @@ import {
   savePreviewModeConfig,
   subscribePreviewModeConfig,
 } from '../services/adminConfigService';
+import {
+  loadCachedAboutConfig,
+  saveAboutAppConfig,
+  subscribeAboutAppConfig,
+} from '../services/aboutAppService';
 
 const STORAGE_KEY = 'notes_app_state_v2';
 
@@ -59,6 +70,19 @@ interface PersistedState {
   recentSearches: string[];
   hasOnboarded: boolean;
   previewStartedAt: number;
+  autoBackup: AutoBackupSchedule;
+  seededDefaultStoryV1: boolean;
+}
+
+function computeNextAutoBackupIso(from: Date, months: number, days: number): string {
+  const next = new Date(from.getTime());
+  if (months > 0) {
+    next.setMonth(next.getMonth() + months);
+  }
+  if (days > 0) {
+    next.setDate(next.getDate() + days);
+  }
+  return next.toISOString();
 }
 
 interface NavigateOptions {
@@ -103,6 +127,11 @@ interface NotesContextValue {
   updateAdminPreviewConfig: (
     next: Pick<PreviewModeConfig, 'enabled' | 'days' | 'hours' | 'minutes' | 'seconds'>
   ) => Promise<boolean>;
+  aboutConfig: AboutAppConfig;
+  aboutSaving: boolean;
+  updateAdminAboutConfig: (
+    next: Pick<AboutAppConfig, 'ceo' | 'team' | 'socials'>
+  ) => Promise<boolean>;
   canCreateNote: boolean;
   canCreateFolder: boolean;
   maxImagesAllowed: number;
@@ -129,6 +158,9 @@ interface NotesContextValue {
   signOutGoogleAccount: () => Promise<void>;
   backupToGoogleDrive: () => Promise<boolean>;
   restoreFromGoogleDrive: () => Promise<boolean>;
+  autoBackup: AutoBackupSchedule;
+  updateAutoBackupSchedule: (months: number, days: number) => void;
+  disableAutoBackupSchedule: () => void;
   restorePurchase: (transactionId?: string) => Promise<{ restored: boolean; message: string }>;
   recentSearches: string[];
   addRecentSearch: (query: string) => void;
@@ -176,6 +208,12 @@ const defaultPersistedState: PersistedState = {
   recentSearches: INITIAL_RECENT_SEARCHES,
   hasOnboarded: false,
   previewStartedAt: Date.now(),
+  autoBackup: {
+    enabled: false,
+    months: 0,
+    days: 0,
+  },
+  seededDefaultStoryV1: true,
 };
 
 function loadInitialState(): PersistedState {
@@ -196,9 +234,33 @@ function loadInitialState(): PersistedState {
         ? parsed.previewStartedAt
         : fallbackNow;
 
+    const loadedFolders: Folder[] = Array.isArray(parsed.folders)
+      ? [...parsed.folders]
+      : [...defaultPersistedState.folders];
+    const loadedNotes: Note[] = Array.isArray(parsed.notes)
+      ? [...parsed.notes]
+      : [...defaultPersistedState.notes];
+
+    if (!parsed.seededDefaultStoryV1) {
+      const existingMyNotesFolder = loadedFolders.find(
+        (f) =>
+          f.id === DEFAULT_MY_NOTES_FOLDER_ID ||
+          f.name.trim().toLowerCase() === 'my notes'
+      );
+      const targetFolderId = existingMyNotesFolder
+        ? existingMyNotesFolder.id
+        : DEFAULT_MY_NOTES_FOLDER_ID;
+      if (!existingMyNotesFolder) {
+        loadedFolders.unshift(DEFAULT_FOLDERS[0]);
+      }
+      if (!loadedNotes.some((n) => n.id === FEATURED_STORY_NOTE_ID)) {
+        loadedNotes.unshift(createFeaturedStoryNote(targetFolderId));
+      }
+    }
+
     return {
-      notes: Array.isArray(parsed.notes) ? parsed.notes : defaultPersistedState.notes,
-      folders: Array.isArray(parsed.folders) ? parsed.folders : defaultPersistedState.folders,
+      notes: loadedNotes,
+      folders: loadedFolders,
       theme: parsed.theme || 'light',
       palette: parsed.palette || 'default',
       noteFontSize:
@@ -235,6 +297,20 @@ function loadInitialState(): PersistedState {
         : defaultPersistedState.recentSearches,
       hasOnboarded: Boolean(parsed.hasOnboarded),
       previewStartedAt,
+      autoBackup: {
+        enabled: Boolean(parsed.autoBackup?.enabled),
+        months: Math.max(0, Math.floor(Number(parsed.autoBackup?.months) || 0)),
+        days: Math.max(0, Math.floor(Number(parsed.autoBackup?.days) || 0)),
+        lastBackupAt:
+          typeof parsed.autoBackup?.lastBackupAt === 'string'
+            ? parsed.autoBackup.lastBackupAt
+            : undefined,
+        nextBackupAt:
+          typeof parsed.autoBackup?.nextBackupAt === 'string'
+            ? parsed.autoBackup.nextBackupAt
+            : undefined,
+      },
+      seededDefaultStoryV1: true,
     };
   } catch {
     return {
@@ -275,11 +351,14 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   const [recentSearches, setRecentSearches] = useState<string[]>(initial.recentSearches);
   const [hasOnboarded, setHasOnboarded] = useState<boolean>(initial.hasOnboarded);
   const [previewStartedAt] = useState<number>(initial.previewStartedAt);
+  const [autoBackup, setAutoBackup] = useState<AutoBackupSchedule>(initial.autoBackup);
   const [previewConfig, setPreviewConfig] = useState<PreviewModeConfig>(() =>
     loadCachedPreviewConfig()
   );
   const [previewSyncState, setPreviewSyncState] = useState<FirestoreSyncState>('loading');
   const [previewSyncError, setPreviewSyncError] = useState<string | null>(null);
+  const [aboutConfig, setAboutConfig] = useState<AboutAppConfig>(() => loadCachedAboutConfig());
+  const [aboutSaving, setAboutSaving] = useState(false);
   const [nowMs, setNowMs] = useState<number>(() => Date.now());
   const [adminSaving, setAdminSaving] = useState(false);
   const [authLoading, setAuthLoading] = useState(false);
@@ -325,6 +404,8 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         recentSearches,
         hasOnboarded,
         previewStartedAt,
+        autoBackup,
+        seededDefaultStoryV1: true,
       };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
     } catch {
@@ -344,6 +425,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     recentSearches,
     hasOnboarded,
     previewStartedAt,
+    autoBackup,
   ]);
 
   useEffect(() => {
@@ -397,6 +479,13 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       } else {
         setAccount((prev) => (prev.uid ? INITIAL_ACCOUNT : { ...prev, isGuest: true }));
       }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    const unsubscribe = subscribeAboutAppConfig((config) => {
+      setAboutConfig(config);
     });
     return () => unsubscribe();
   }, []);
@@ -622,6 +711,138 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       setDriveBusy(false);
     }
   }, [showToast]);
+
+  const notesRef = useRef<Note[]>(notes);
+  notesRef.current = notes;
+  const foldersRef = useRef<Folder[]>(folders);
+  foldersRef.current = folders;
+  const autoBackupRunningRef = useRef(false);
+
+  const updateAutoBackupSchedule = useCallback(
+    (rawMonths: number, rawDays: number) => {
+      const months = Math.max(0, Math.floor(Number.isFinite(rawMonths) ? rawMonths : 0));
+      const days = Math.max(0, Math.floor(Number.isFinite(rawDays) ? rawDays : 0));
+      if (months === 0 && days === 0) {
+        showToast('Enter at least 1 month or 1 day', 'danger');
+        return;
+      }
+      const nextBackupAt = computeNextAutoBackupIso(new Date(), months, days);
+      setAutoBackup((prev) => ({
+        ...prev,
+        enabled: true,
+        months,
+        days,
+        nextBackupAt,
+      }));
+      const parts: string[] = [];
+      if (months > 0) parts.push(`${months} ${months === 1 ? 'month' : 'months'}`);
+      if (days > 0) parts.push(`${days} ${days === 1 ? 'day' : 'days'}`);
+      showToast(`Auto PDF backup set for every ${parts.join(' ')}`);
+    },
+    [showToast]
+  );
+
+  const disableAutoBackupSchedule = useCallback(() => {
+    setAutoBackup((prev) => ({
+      ...prev,
+      enabled: false,
+      nextBackupAt: undefined,
+    }));
+    showToast('Auto backup turned off');
+  }, [showToast]);
+
+  useEffect(() => {
+    if (!autoBackup.enabled || (autoBackup.months <= 0 && autoBackup.days <= 0)) {
+      return;
+    }
+
+    const nextIso =
+      autoBackup.nextBackupAt ||
+      computeNextAutoBackupIso(new Date(), autoBackup.months, autoBackup.days);
+    const targetMs = new Date(nextIso).getTime();
+
+    if (!Number.isFinite(targetMs)) {
+      setAutoBackup((prev) => ({
+        ...prev,
+        nextBackupAt: computeNextAutoBackupIso(new Date(), prev.months, prev.days),
+      }));
+      return;
+    }
+
+    const triggerIfDue = () => {
+      if (Date.now() < targetMs || autoBackupRunningRef.current) return;
+      autoBackupRunningRef.current = true;
+      const exportable = notesRef.current.filter((n) => !n.isDeleted);
+      const nextSchedule = computeNextAutoBackupIso(
+        new Date(),
+        autoBackup.months,
+        autoBackup.days
+      );
+
+      if (exportable.length === 0) {
+        setAutoBackup((prev) => ({
+          ...prev,
+          nextBackupAt: nextSchedule,
+        }));
+        autoBackupRunningRef.current = false;
+        return;
+      }
+
+      void exportNotesAsPdfZip(notesRef.current, foldersRef.current, {
+        preferSilentDocuments: true,
+      })
+        .then((res) => {
+          const completedAt = new Date().toISOString();
+          setAutoBackup((prev) => ({
+            ...prev,
+            lastBackupAt: completedAt,
+            nextBackupAt: computeNextAutoBackupIso(
+              new Date(),
+              prev.months,
+              prev.days
+            ),
+          }));
+          showToast(
+            res.mode === 'saved'
+              ? `Auto PDF backup saved (${res.count} notes)`
+              : `Auto PDF backup ready (${res.count} notes)`
+          );
+        })
+        .catch(() => {
+          // Retry on next app open if interrupted
+        })
+        .finally(() => {
+          autoBackupRunningRef.current = false;
+        });
+    };
+
+    const remaining = targetMs - Date.now();
+    if (remaining <= 0) {
+      triggerIfDue();
+      return;
+    }
+
+    const timer = window.setTimeout(
+      triggerIfDue,
+      Math.min(remaining + 100, 2147483647)
+    );
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        triggerIfDue();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => {
+      window.clearTimeout(timer);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
+  }, [
+    autoBackup.days,
+    autoBackup.enabled,
+    autoBackup.months,
+    autoBackup.nextBackupAt,
+    showToast,
+  ]);
 
   const restorePurchase = useCallback(
     async (transactionId?: string): Promise<{ restored: boolean; message: string }> => {
@@ -879,6 +1100,33 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         return false;
       } finally {
         setAdminSaving(false);
+      }
+    },
+    [isAdmin, showToast]
+  );
+
+  const updateAdminAboutConfig = useCallback(
+    async (
+      next: Pick<AboutAppConfig, 'ceo' | 'team' | 'socials'>
+    ): Promise<boolean> => {
+      if (!isAdmin) {
+        showToast('Admin access required', 'danger');
+        return false;
+      }
+      setAboutSaving(true);
+      try {
+        const saved = await saveAboutAppConfig(next);
+        setAboutConfig(saved);
+        showToast('About App updated');
+        return true;
+      } catch (err) {
+        showToast(
+          err instanceof Error ? err.message : 'Could not save About App settings',
+          'danger'
+        );
+        return false;
+      } finally {
+        setAboutSaving(false);
       }
     },
     [isAdmin, showToast]
@@ -1330,6 +1578,9 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     isAdmin,
     adminSaving,
     updateAdminPreviewConfig,
+    aboutConfig,
+    aboutSaving,
+    updateAdminAboutConfig,
     canCreateNote,
     canCreateFolder,
     maxImagesAllowed,
@@ -1356,6 +1607,9 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     signOutGoogleAccount,
     backupToGoogleDrive,
     restoreFromGoogleDrive,
+    autoBackup,
+    updateAutoBackupSchedule,
+    disableAutoBackupSchedule,
     restorePurchase,
     recentSearches,
     addRecentSearch,

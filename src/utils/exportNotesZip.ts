@@ -537,7 +537,11 @@ async function renderNoteToPdfBytes(note: Note, folderName: string): Promise<Uin
   return new Uint8Array(buffer);
 }
 
-async function saveAndShareZip(zip: JSZip, fileName: string): Promise<'shared' | 'downloaded'> {
+async function saveAndShareZip(
+  zip: JSZip,
+  fileName: string,
+  options?: { preferSilentDocuments?: boolean }
+): Promise<'shared' | 'saved' | 'downloaded'> {
   if (Capacitor.isNativePlatform()) {
     const base64Data = await zip.generateAsync({
       type: 'base64',
@@ -545,7 +549,7 @@ async function saveAndShareZip(zip: JSZip, fileName: string): Promise<'shared' |
       compressionOptions: { level: 6 },
     });
 
-    // Best-effort copy into Public Documents/Notes on Android 11+
+    let savedToDocuments = false;
     try {
       await Filesystem.writeFile({
         path: `Notes/${fileName}`,
@@ -553,8 +557,13 @@ async function saveAndShareZip(zip: JSZip, fileName: string): Promise<'shared' |
         directory: Directory.Documents,
         recursive: true,
       });
+      savedToDocuments = true;
     } catch {
       // Cache + Share works across all Android versions without storage permissions
+    }
+
+    if (options?.preferSilentDocuments && savedToDocuments) {
+      return 'saved';
     }
 
     const cached = await Filesystem.writeFile({
@@ -591,7 +600,7 @@ async function saveAndShareZip(zip: JSZip, fileName: string): Promise<'shared' |
 export async function exportNotesAsTextZip(
   notes: Note[],
   folders: Folder[]
-): Promise<{ count: number; mode: 'shared' | 'downloaded' }> {
+): Promise<{ count: number; mode: 'shared' | 'saved' | 'downloaded' }> {
   const exportable = notes.filter((n) => !n.isDeleted);
   if (exportable.length === 0) {
     throw new Error('No notes available to export.');
@@ -627,8 +636,9 @@ export async function exportNotesAsTextZip(
 
 export async function exportNotesAsPdfZip(
   notes: Note[],
-  folders: Folder[]
-): Promise<{ count: number; mode: 'shared' | 'downloaded' }> {
+  folders: Folder[],
+  options?: { preferSilentDocuments?: boolean }
+): Promise<{ count: number; mode: 'shared' | 'saved' | 'downloaded' }> {
   const exportable = notes.filter((n) => !n.isDeleted);
   if (exportable.length === 0) {
     throw new Error('No notes available to export.');
@@ -648,6 +658,6 @@ export async function exportNotesAsPdfZip(
   }
 
   const dateTag = new Date().toISOString().slice(0, 10);
-  const mode = await saveAndShareZip(zip, `notes-pdf-${dateTag}.zip`);
+  const mode = await saveAndShareZip(zip, `notes-pdf-${dateTag}.zip`, options);
   return { count: exportable.length, mode };
 }

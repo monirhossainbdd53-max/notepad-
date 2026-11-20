@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
-import { ChevronDown, ChevronLeft, Send } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { ChevronDown, ChevronLeft, Loader2, Send } from 'lucide-react';
 import { NavigationShell } from '../components/NavigationShell';
 import { useNotes } from '../context/NotesContext';
+import { submitSupportMessage } from '../services/supportService';
 
 const FAQS = [
   {
@@ -23,17 +24,44 @@ const FAQS = [
 ];
 
 export function HelpSupportScreen() {
-  const { goBack, showToast } = useNotes();
+  const { account, goBack, showToast } = useNotes();
   const [openIndex, setOpenIndex] = useState<number | null>(0);
+  const [email, setEmail] = useState(
+    account.isGuest === false && account.email ? account.email : ''
+  );
   const [subject, setSubject] = useState('');
   const [message, setMessage] = useState('');
+  const [sending, setSending] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  useEffect(() => {
+    if (account.isGuest === false && account.email && !email) {
+      setEmail(account.email);
+    }
+  }, [account.email, account.isGuest, email]);
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!subject.trim() || !message.trim()) return;
-    setSubject('');
-    setMessage('');
-    showToast('Support message saved (UI preview)');
+    if (sending) return;
+    setSending(true);
+    try {
+      await submitSupportMessage({
+        userEmail: email,
+        userName: account.isGuest === false ? account.name : 'Notes User',
+        userUid: account.uid,
+        subject,
+        message,
+      });
+      setSubject('');
+      setMessage('');
+      showToast('Message sent to support');
+    } catch (err) {
+      showToast(
+        err instanceof Error ? err.message : 'Could not send message right now',
+        'danger'
+      );
+    } finally {
+      setSending(false);
+    }
   };
 
   return (
@@ -97,6 +125,15 @@ export function HelpSupportScreen() {
             className="rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] p-4 space-y-3"
           >
             <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="Your email"
+              aria-label="Your email"
+              className="w-full min-h-[46px] rounded-xl bg-[var(--bg-canvas)] border border-[var(--divider)] px-4 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-primary)]"
+            />
+
+            <input
               type="text"
               value={subject}
               onChange={(e) => setSubject(e.target.value)}
@@ -116,11 +153,15 @@ export function HelpSupportScreen() {
 
             <button
               type="submit"
-              disabled={!subject.trim() || !message.trim()}
+              disabled={sending || !email.trim() || !subject.trim() || !message.trim()}
               className="flex w-full min-h-[46px] items-center justify-center gap-2 rounded-xl bg-[var(--text-primary)] dark:bg-[var(--accent-primary)] text-sm font-semibold text-[var(--bg-card)] dark:text-[#171717] disabled:opacity-40 cursor-pointer"
             >
-              <Send className="h-4 w-4" strokeWidth={2} />
-              Send Message
+              {sending ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Send className="h-4 w-4" strokeWidth={2} />
+              )}
+              {sending ? 'Sending...' : 'Send Message'}
             </button>
           </form>
         </div>

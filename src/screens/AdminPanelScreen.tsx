@@ -1,19 +1,39 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
+  CheckCircle2,
   ChevronLeft,
   Clock,
+  ImagePlus,
   LayoutDashboard,
   Loader2,
+  Mail,
   Menu,
+  MessageSquare,
+  Plus,
+  Send,
   ShieldAlert,
   ShieldCheck,
+  Trash2,
+  Users,
   X,
 } from 'lucide-react';
 import { useNotes } from '../context/NotesContext';
+import { compressTeamPhotoFile } from '../services/aboutAppService';
 import { getPreviewDurationMs } from '../services/adminConfigService';
-import { formatFullDate } from '../utils/noteHelpers';
+import {
+  buildSupportReplyMailto,
+  replyToSupportMessage,
+  subscribeSupportMessages,
+} from '../services/supportService';
+import {
+  AboutSocialLink,
+  AboutTeamMember,
+  SupportMessage,
+} from '../types/notes';
+import { formatFullDate, generateId } from '../utils/noteHelpers';
 
-type AdminModule = 'overview' | 'preview-timer';
+type AdminModule = 'overview' | 'preview-timer' | 'support' | 'about';
+type SupportFilter = 'all' | 'open' | 'replied';
 
 export function AdminPanelScreen() {
   const {
@@ -24,7 +44,11 @@ export function AdminPanelScreen() {
     previewSyncError,
     adminSaving,
     updateAdminPreviewConfig,
+    aboutConfig,
+    aboutSaving,
+    updateAdminAboutConfig,
     goBack,
+    showToast,
   } = useNotes();
 
   const [activeModule, setActiveModule] = useState<AdminModule>('preview-timer');
@@ -36,6 +60,16 @@ export function AdminPanelScreen() {
   const [minutes, setMinutes] = useState<string>(String(previewConfig.minutes));
   const [seconds, setSeconds] = useState<string>(String(previewConfig.seconds));
 
+  const [ceoDraft, setCeoDraft] = useState<AboutTeamMember>(aboutConfig.ceo);
+  const [teamDraft, setTeamDraft] = useState<AboutTeamMember[]>(aboutConfig.team);
+  const [socialsDraft, setSocialsDraft] = useState<AboutSocialLink[]>(aboutConfig.socials);
+
+  const [supportTickets, setSupportTickets] = useState<SupportMessage[]>([]);
+  const [supportSyncError, setSupportSyncError] = useState<string | null>(null);
+  const [supportFilter, setSupportFilter] = useState<SupportFilter>('all');
+  const [replyDrafts, setReplyDrafts] = useState<Record<string, string>>({});
+  const [replyingId, setReplyingId] = useState<string | null>(null);
+
   useEffect(() => {
     setEnabled(previewConfig.enabled);
     setDays(String(previewConfig.days));
@@ -43,6 +77,37 @@ export function AdminPanelScreen() {
     setMinutes(String(previewConfig.minutes));
     setSeconds(String(previewConfig.seconds));
   }, [previewConfig]);
+
+  useEffect(() => {
+    setCeoDraft(aboutConfig.ceo);
+    setTeamDraft(aboutConfig.team);
+    setSocialsDraft(aboutConfig.socials);
+  }, [aboutConfig]);
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    setSupportSyncError(null);
+    const unsubscribe = subscribeSupportMessages(
+      (items) => {
+        setSupportTickets(items);
+        setSupportSyncError(null);
+      },
+      (errMsg) => {
+        setSupportSyncError(errMsg);
+      }
+    );
+    return () => unsubscribe();
+  }, [isAdmin]);
+
+  const openTicketCount = useMemo(
+    () => supportTickets.filter((t) => t.status === 'open').length,
+    [supportTickets]
+  );
+
+  const filteredTickets = useMemo(() => {
+    if (supportFilter === 'all') return supportTickets;
+    return supportTickets.filter((t) => t.status === supportFilter);
+  }, [supportFilter, supportTickets]);
 
   if (!isAdmin) {
     return (
@@ -65,9 +130,21 @@ export function AdminPanelScreen() {
     );
   }
 
-  const navItems: Array<{ id: AdminModule; label: string; icon: typeof LayoutDashboard }> = [
+  const navItems: Array<{
+    id: AdminModule;
+    label: string;
+    icon: typeof LayoutDashboard;
+    badge?: number;
+  }> = [
     { id: 'overview', label: 'Overview', icon: LayoutDashboard },
     { id: 'preview-timer', label: 'Preview Timer', icon: Clock },
+    {
+      id: 'support',
+      label: 'Support Messages',
+      icon: MessageSquare,
+      badge: openTicketCount > 0 ? openTicketCount : undefined,
+    },
+    { id: 'about', label: 'About App', icon: Users },
   ];
 
   const totalConfiguredMs = getPreviewDurationMs(previewConfig);
@@ -98,6 +175,67 @@ export function AdminPanelScreen() {
     });
   };
 
+  const handleSendReply = async (ticket: SupportMessage) => {
+    const draft = (replyDrafts[ticket.id] || '').trim();
+    if (!draft || replyingId) return;
+    setReplyingId(ticket.id);
+    try {
+      const res = await replyToSupportMessage(ticket, draft);
+      setReplyDrafts((prev) => ({ ...prev, [ticket.id]: '' }));
+      showToast(res.statusMessage);
+    } catch (err) {
+      showToast(
+        err instanceof Error ? err.message : 'Could not send reply',
+        'danger'
+      );
+    } finally {
+      setReplyingId(null);
+    }
+  };
+
+  const handlePhotoUpload = async (
+    file: File | undefined,
+    onDone: (compressedDataUrl: string) => void
+  ) => {
+    if (!file) return;
+    try {
+      const dataUrl = await compressTeamPhotoFile(file);
+      onDone(dataUrl);
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Invalid photo', 'danger');
+    }
+  };
+
+  const handleAddTeamMember = () => {
+    setTeamDraft((prev) => [
+      ...prev,
+      {
+        id: generateId('member'),
+        name: '',
+        role: '',
+        image: aboutConfig.ceo.image,
+      },
+    ]);
+  };
+
+  const handleSaveAboutApp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    await updateAdminAboutConfig({
+      ceo: ceoDraft,
+      team: teamDraft,
+      socials: socialsDraft,
+    });
+  };
+
+  const headerTitle =
+    activeModule === 'overview'
+      ? 'Overview'
+      : activeModule === 'support'
+      ? 'Support Messages'
+      : activeModule === 'about'
+      ? 'About App'
+      : 'Preview Timer';
+
   return (
     <div className="min-h-screen bg-[var(--bg-canvas)] text-[var(--text-primary)] flex">
       {/* Desktop Left Sidebar */}
@@ -121,14 +259,21 @@ export function AdminPanelScreen() {
                 key={item.id}
                 type="button"
                 onClick={() => setActiveModule(item.id)}
-                className={`flex w-full min-h-[44px] items-center gap-3 rounded-xl px-3.5 text-sm font-medium transition-colors cursor-pointer ${
+                className={`flex w-full min-h-[44px] items-center justify-between gap-2 rounded-xl px-3.5 text-sm font-medium transition-colors cursor-pointer ${
                   active
                     ? 'bg-[var(--accent-soft)] text-[var(--accent-primary)] font-semibold'
                     : 'text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)] hover:text-[var(--text-primary)]'
                 }`}
               >
-                <Icon className="h-4 w-4 shrink-0" strokeWidth={1.9} />
-                <span>{item.label}</span>
+                <span className="flex items-center gap-3 min-w-0">
+                  <Icon className="h-4 w-4 shrink-0" strokeWidth={1.9} />
+                  <span className="truncate">{item.label}</span>
+                </span>
+                {typeof item.badge === 'number' && (
+                  <span className="rounded-lg bg-[var(--accent-primary)] px-1.5 py-0.5 text-[11px] font-bold text-white dark:text-[#171717] tabular-nums">
+                    {item.badge}
+                  </span>
+                )}
               </button>
             );
           })}
@@ -159,7 +304,7 @@ export function AdminPanelScreen() {
               <ChevronLeft className="h-5 w-5" strokeWidth={2} />
             </button>
             <h1 className="text-lg sm:text-xl font-bold tracking-tight truncate">
-              {activeModule === 'overview' ? 'Overview' : 'Preview Timer'}
+              {headerTitle}
             </h1>
           </div>
 
@@ -187,14 +332,21 @@ export function AdminPanelScreen() {
                     setActiveModule(item.id);
                     setMobileNavOpen(false);
                   }}
-                  className={`flex w-full min-h-[44px] items-center gap-3 rounded-xl px-3.5 text-sm font-medium transition-colors cursor-pointer ${
+                  className={`flex w-full min-h-[44px] items-center justify-between gap-2 rounded-xl px-3.5 text-sm font-medium transition-colors cursor-pointer ${
                     active
                       ? 'bg-[var(--accent-soft)] text-[var(--accent-primary)] font-semibold'
                       : 'text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)]'
                   }`}
                 >
-                  <Icon className="h-4 w-4 shrink-0" strokeWidth={1.9} />
-                  <span>{item.label}</span>
+                  <span className="flex items-center gap-3 min-w-0">
+                    <Icon className="h-4 w-4 shrink-0" strokeWidth={1.9} />
+                    <span className="truncate">{item.label}</span>
+                  </span>
+                  {typeof item.badge === 'number' && (
+                    <span className="rounded-lg bg-[var(--accent-primary)] px-1.5 py-0.5 text-[11px] font-bold text-white dark:text-[#171717] tabular-nums">
+                      {item.badge}
+                    </span>
+                  )}
                 </button>
               );
             })}
@@ -243,6 +395,24 @@ export function AdminPanelScreen() {
                 )}
               </div>
 
+              <div className="rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] p-5 flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-xs font-medium text-[var(--text-secondary)]">
+                    Support Inbox
+                  </p>
+                  <p className="mt-1 text-lg font-bold tabular-nums">
+                    {openTicketCount} open · {supportTickets.length} total
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setActiveModule('support')}
+                  className="min-h-[40px] rounded-xl bg-[var(--bg-subtle)] px-4 text-xs font-semibold text-[var(--text-primary)] cursor-pointer"
+                >
+                  Open Inbox
+                </button>
+              </div>
+
               <button
                 type="button"
                 onClick={() => setActiveModule('preview-timer')}
@@ -251,6 +421,385 @@ export function AdminPanelScreen() {
                 Configure Preview Timer
               </button>
             </div>
+          ) : activeModule === 'support' ? (
+            <div className="space-y-4">
+              <div className="flex items-center gap-2">
+                {(['all', 'open', 'replied'] as const).map((filter) => {
+                  const active = supportFilter === filter;
+                  return (
+                    <button
+                      key={filter}
+                      type="button"
+                      onClick={() => setSupportFilter(filter)}
+                      className={`min-h-[38px] rounded-xl px-4 text-xs font-semibold capitalize transition-colors cursor-pointer ${
+                        active
+                          ? 'bg-[var(--text-primary)] dark:bg-[var(--accent-primary)] text-[var(--bg-card)] dark:text-[#171717]'
+                          : 'bg-[var(--bg-card)] border border-[var(--divider)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+                      }`}
+                    >
+                      {filter}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {supportSyncError && (
+                <div className="rounded-2xl bg-[#E45B5B]/10 border border-[#E45B5B]/30 p-4 text-xs text-[#E45B5B]">
+                  {supportSyncError}
+                </div>
+              )}
+
+              {filteredTickets.length === 0 ? (
+                <div className="rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] p-8 text-center">
+                  <MessageSquare className="h-7 w-7 mx-auto text-[var(--text-secondary)] opacity-60" strokeWidth={1.75} />
+                  <p className="mt-3 text-sm font-semibold text-[var(--text-primary)]">
+                    No support messages yet
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {filteredTickets.map((ticket) => {
+                    const draft = replyDrafts[ticket.id] ?? '';
+                    const isSending = replyingId === ticket.id;
+                    const mailtoHref = buildSupportReplyMailto(
+                      ticket,
+                      draft.trim() || ticket.adminReply || ''
+                    );
+
+                    return (
+                      <div
+                        key={ticket.id}
+                        className="rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] p-5 space-y-3.5"
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <h3 className="text-base font-bold text-[var(--text-primary)] break-words">
+                              {ticket.subject}
+                            </h3>
+                            <p className="mt-0.5 text-xs text-[var(--text-secondary)] break-all">
+                              {ticket.userName} · {ticket.userEmail}
+                            </p>
+                          </div>
+                          <span
+                            className={`shrink-0 rounded-lg px-2.5 py-1 text-[11px] font-semibold ${
+                              ticket.status === 'replied'
+                                ? 'bg-[#2E7D32]/12 text-[#2E7D32] dark:text-[#81C995]'
+                                : 'bg-[var(--accent-soft)] text-[var(--accent-primary)]'
+                            }`}
+                          >
+                            {ticket.status === 'replied' ? 'Replied' : 'Open'}
+                          </span>
+                        </div>
+
+                        <p className="text-sm text-[var(--text-primary)] whitespace-pre-wrap leading-relaxed rounded-xl bg-[var(--bg-canvas)] border border-[var(--divider)] p-3.5">
+                          {ticket.message}
+                        </p>
+
+                        {ticket.createdAt && (
+                          <p className="text-[11px] text-[var(--text-secondary)]">
+                            {formatFullDate(ticket.createdAt)}
+                          </p>
+                        )}
+
+                        {ticket.adminReply && (
+                          <div className="rounded-xl bg-[var(--accent-soft)]/50 border border-[var(--accent-primary)]/25 p-3.5 space-y-1.5">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-[var(--accent-primary)]">
+                                <CheckCircle2 className="h-3.5 w-3.5" />
+                                Admin Reply
+                              </span>
+                              <span className="text-[11px] text-[var(--text-secondary)]">
+                                {ticket.emailDeliveryStatus === 'sent'
+                                  ? 'Emailed'
+                                  : ticket.repliedAt
+                                  ? formatFullDate(ticket.repliedAt)
+                                  : 'Saved'}
+                              </span>
+                            </div>
+                            <p className="text-sm text-[var(--text-primary)] whitespace-pre-wrap">
+                              {ticket.adminReply}
+                            </p>
+                          </div>
+                        )}
+
+                        <div className="space-y-2.5 pt-1">
+                          <textarea
+                            value={draft}
+                            onChange={(e) =>
+                              setReplyDrafts((prev) => ({
+                                ...prev,
+                                [ticket.id]: e.target.value,
+                              }))
+                            }
+                            placeholder="Write your reply..."
+                            aria-label="Reply message"
+                            rows={3}
+                            className="w-full rounded-xl bg-[var(--bg-canvas)] border border-[var(--divider)] p-3.5 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-primary)] resize-none"
+                          />
+
+                          <div className="flex flex-col sm:flex-row gap-2">
+                            <button
+                              type="button"
+                              disabled={!draft.trim() || isSending}
+                              onClick={() => void handleSendReply(ticket)}
+                              className="flex-1 min-h-[42px] flex items-center justify-center gap-2 rounded-xl bg-[var(--text-primary)] dark:bg-[var(--accent-primary)] px-4 text-xs font-semibold text-[var(--bg-card)] dark:text-[#171717] disabled:opacity-40 cursor-pointer"
+                            >
+                              {isSending ? (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              ) : (
+                                <Send className="h-3.5 w-3.5" strokeWidth={2} />
+                              )}
+                              {isSending ? 'Sending...' : 'Send Reply'}
+                            </button>
+
+                            <a
+                              href={mailtoHref}
+                              className="min-h-[42px] flex items-center justify-center gap-2 rounded-xl border border-[var(--divider)] bg-[var(--bg-canvas)] px-4 text-xs font-semibold text-[var(--text-primary)] hover:bg-[var(--bg-subtle)] transition-colors"
+                            >
+                              <Mail className="h-3.5 w-3.5" strokeWidth={2} />
+                              Send via Email App
+                            </a>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          ) : activeModule === 'about' ? (
+            <form onSubmit={handleSaveAboutApp} className="space-y-6">
+              {/* Social Media Controls */}
+              <div className="rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] p-5 space-y-3.5">
+                <p className="text-sm font-semibold">Social Media Links</p>
+                <div className="divide-y divide-[var(--divider)]">
+                  {socialsDraft.map((item, idx) => (
+                    <div key={item.id} className="py-3 first:pt-1 last:pb-1 space-y-2">
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-xs font-semibold text-[var(--text-primary)]">
+                          {item.label}
+                        </span>
+                        <button
+                          type="button"
+                          role="switch"
+                          aria-checked={item.enabled}
+                          onClick={() =>
+                            setSocialsDraft((prev) =>
+                              prev.map((s, i) =>
+                                i === idx ? { ...s, enabled: !s.enabled } : s
+                              )
+                            )
+                          }
+                          className={`relative h-6 w-11 shrink-0 rounded-full transition-colors cursor-pointer ${
+                            item.enabled ? 'bg-[var(--accent-primary)]' : 'bg-[var(--divider)]'
+                          }`}
+                        >
+                          <span
+                            className={`absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white transition-transform ${
+                              item.enabled ? 'translate-x-5' : 'translate-x-0'
+                            }`}
+                          />
+                        </button>
+                      </div>
+                      <input
+                        type="url"
+                        value={item.href}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setSocialsDraft((prev) =>
+                            prev.map((s, i) => (i === idx ? { ...s, href: val } : s))
+                          );
+                        }}
+                        placeholder={`${item.label} URL (https://...)`}
+                        aria-label={`${item.label} URL`}
+                        className="w-full min-h-[42px] rounded-xl bg-[var(--bg-canvas)] border border-[var(--divider)] px-3.5 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-primary)]"
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Leadership & Team Controls */}
+              <div className="rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] p-5 space-y-4">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-sm font-semibold">Leadership & Team</p>
+                  <button
+                    type="button"
+                    onClick={handleAddTeamMember}
+                    className="inline-flex min-h-[36px] items-center gap-1.5 rounded-xl bg-[var(--accent-soft)] px-3 text-xs font-semibold text-[var(--accent-primary)] cursor-pointer"
+                  >
+                    <Plus className="h-3.5 w-3.5" strokeWidth={2.2} />
+                    Add Member
+                  </button>
+                </div>
+
+                {/* Founder / CEO Card */}
+                <div className="rounded-2xl bg-[var(--bg-canvas)] border border-[var(--divider)] p-4 space-y-3">
+                  <div className="flex items-center gap-3.5">
+                    <img
+                      src={ceoDraft.image}
+                      alt={ceoDraft.name || 'Founder'}
+                      referrerPolicy="no-referrer"
+                      className="h-16 w-14 shrink-0 rounded-xl object-cover object-top border border-[var(--divider)] bg-[var(--bg-subtle)]"
+                    />
+                    <label className="inline-flex min-h-[38px] items-center gap-2 rounded-xl border border-[var(--divider)] bg-[var(--bg-card)] px-3.5 text-xs font-semibold text-[var(--text-primary)] hover:bg-[var(--bg-subtle)] transition-colors cursor-pointer">
+                      <ImagePlus className="h-3.5 w-3.5" />
+                      <span>Change Photo</span>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          e.target.value = '';
+                          void handlePhotoUpload(file, (url) =>
+                            setCeoDraft((prev) => ({ ...prev, image: url }))
+                          );
+                        }}
+                      />
+                    </label>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    <input
+                      type="text"
+                      value={ceoDraft.name}
+                      onChange={(e) =>
+                        setCeoDraft((prev) => ({ ...prev, name: e.target.value }))
+                      }
+                      placeholder="Full name"
+                      aria-label="CEO Name"
+                      className="w-full min-h-[42px] rounded-xl bg-[var(--bg-card)] border border-[var(--divider)] px-3.5 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-primary)]"
+                    />
+                    <input
+                      type="text"
+                      value={ceoDraft.role}
+                      onChange={(e) =>
+                        setCeoDraft((prev) => ({ ...prev, role: e.target.value }))
+                      }
+                      placeholder="Role / Title"
+                      aria-label="CEO Role"
+                      className="w-full min-h-[42px] rounded-xl bg-[var(--bg-card)] border border-[var(--divider)] px-3.5 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-primary)]"
+                    />
+                  </div>
+
+                  <input
+                    type="url"
+                    value={ceoDraft.image.startsWith('data:') ? '' : ceoDraft.image}
+                    onChange={(e) =>
+                      setCeoDraft((prev) => ({ ...prev, image: e.target.value }))
+                    }
+                    placeholder="Photo URL (optional)"
+                    aria-label="CEO Photo URL"
+                    className="w-full min-h-[42px] rounded-xl bg-[var(--bg-card)] border border-[var(--divider)] px-3.5 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-primary)]"
+                  />
+                </div>
+
+                {/* Dynamic Team Members List */}
+                <div className="space-y-3">
+                  {teamDraft.map((member, idx) => (
+                    <div
+                      key={member.id}
+                      className="rounded-2xl bg-[var(--bg-canvas)] border border-[var(--divider)] p-4 space-y-3"
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-3">
+                          <img
+                            src={member.image}
+                            alt={member.name || 'Member'}
+                            referrerPolicy="no-referrer"
+                            className="h-14 w-12 shrink-0 rounded-xl object-cover object-top border border-[var(--divider)] bg-[var(--bg-subtle)]"
+                          />
+                          <label className="inline-flex min-h-[36px] items-center gap-1.5 rounded-xl border border-[var(--divider)] bg-[var(--bg-card)] px-3 text-xs font-semibold text-[var(--text-primary)] hover:bg-[var(--bg-subtle)] transition-colors cursor-pointer">
+                            <ImagePlus className="h-3.5 w-3.5" />
+                            <span>Photo</span>
+                            <input
+                              type="file"
+                              accept="image/*"
+                              className="hidden"
+                              onChange={(e) => {
+                                const file = e.target.files?.[0];
+                                e.target.value = '';
+                                void handlePhotoUpload(file, (url) =>
+                                  setTeamDraft((prev) =>
+                                    prev.map((m, i) =>
+                                      i === idx ? { ...m, image: url } : m
+                                    )
+                                  )
+                                );
+                              }}
+                            />
+                          </label>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setTeamDraft((prev) => prev.filter((_, i) => i !== idx))
+                          }
+                          aria-label="Remove team member"
+                          className="min-h-[36px] min-w-[36px] flex items-center justify-center rounded-xl bg-[#E45B5B]/10 text-[#E45B5B] cursor-pointer"
+                        >
+                          <Trash2 className="h-4 w-4" strokeWidth={2} />
+                        </button>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                        <input
+                          type="text"
+                          value={member.name}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setTeamDraft((prev) =>
+                              prev.map((m, i) => (i === idx ? { ...m, name: val } : m))
+                            );
+                          }}
+                          placeholder="Member name"
+                          aria-label="Member name"
+                          className="w-full min-h-[42px] rounded-xl bg-[var(--bg-card)] border border-[var(--divider)] px-3.5 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-primary)]"
+                        />
+                        <input
+                          type="text"
+                          value={member.role}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setTeamDraft((prev) =>
+                              prev.map((m, i) => (i === idx ? { ...m, role: val } : m))
+                            );
+                          }}
+                          placeholder="Role / Title"
+                          aria-label="Member role"
+                          className="w-full min-h-[42px] rounded-xl bg-[var(--bg-card)] border border-[var(--divider)] px-3.5 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-primary)]"
+                        />
+                      </div>
+
+                      <input
+                        type="url"
+                        value={member.image.startsWith('data:') ? '' : member.image}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setTeamDraft((prev) =>
+                            prev.map((m, i) => (i === idx ? { ...m, image: val } : m))
+                          );
+                        }}
+                        placeholder="Photo URL (optional)"
+                        aria-label="Member photo URL"
+                        className="w-full min-h-[42px] rounded-xl bg-[var(--bg-card)] border border-[var(--divider)] px-3.5 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-primary)]"
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                disabled={aboutSaving}
+                className="flex w-full min-h-[48px] items-center justify-center gap-2 rounded-xl bg-[var(--text-primary)] dark:bg-[var(--accent-primary)] text-sm font-semibold text-[var(--bg-card)] dark:text-[#171717] disabled:opacity-60 transition-opacity hover:opacity-90 cursor-pointer"
+              >
+                {aboutSaving && <Loader2 className="h-4 w-4 animate-spin" />}
+                Save About App
+              </button>
+            </form>
           ) : (
             <form onSubmit={handleSave} className="space-y-5">
               <div className="rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] p-5 flex items-center justify-between gap-4">

@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import dotenv from 'dotenv';
 import express, { Request, Response } from 'express';
 import fs from 'fs';
+import nodemailer from 'nodemailer';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -13,6 +14,59 @@ const __dirname = path.dirname(__filename);
 const PORT = Number(process.env.PORT) || 3000;
 const DATA_DIR = path.resolve(__dirname, '.data');
 const PURCHASES_FILE = path.join(DATA_DIR, 'purchases.json');
+const ADMIN_EMAIL = 'riyadislambdd@gmail.com';
+
+function getFirebaseWebApiKey(): string {
+  if (process.env.FIREBASE_WEB_API_KEY) {
+    return process.env.FIREBASE_WEB_API_KEY.trim();
+  }
+  try {
+    const configPath = path.resolve(__dirname, 'firebase-applet-config.json');
+    if (fs.existsSync(configPath)) {
+      const parsed = JSON.parse(fs.readFileSync(configPath, 'utf8')) as { apiKey?: string };
+      return String(parsed.apiKey || '').trim();
+    }
+  } catch {
+    // Ignore read error
+  }
+  return '';
+}
+
+async function verifyAdminFirebaseToken(idToken: string): Promise<boolean> {
+  const apiKey = getFirebaseWebApiKey();
+  if (!apiKey || !idToken) return false;
+  try {
+    const res = await fetch(
+      `https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${encodeURIComponent(apiKey)}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ idToken }),
+      }
+    );
+    if (!res.ok) return false;
+    const data = (await res.json()) as {
+      users?: Array<{ email?: string; emailVerified?: boolean }>;
+    };
+    const user = data.users?.[0];
+    return Boolean(
+      user &&
+        user.emailVerified === true &&
+        String(user.email || '').trim().toLowerCase() === ADMIN_EMAIL
+    );
+  } catch {
+    return false;
+  }
+}
+
+function escapeHtml(raw: string): string {
+  return raw
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
 
 type BillingPlan = 'monthly' | 'yearly';
 type PaymentProvider = 'sslcommerz' | 'binance_pay';
@@ -625,6 +679,107 @@ async function startServer() {
       restored: true,
       purchase: match,
     });
+  });
+
+  app.post('/api/support/reply', async (req: Request, res: Response) => {
+    try {
+      const authHeader = String(req.headers.authorization || '');
+      const bearerToken = authHeader.startsWith('Bearer ')
+        ? authHeader.slice(7).trim()
+        : '';
+      const idToken = bearerToken || String(req.body?.idToken || '').trim();
+
+      const isAdmin = await verifyAdminFirebaseToken(idToken);
+      if (!isAdmin) {
+        res.status(403).json({
+          sent: false,
+          error: 'Verified admin authentication required.',
+        });
+        return;
+      }
+
+      const toEmail = String(req.body?.toEmail || '').trim();
+      const userName = String(req.body?.userName || 'User').trim() || 'User';
+      const subject = String(req.body?.subject || 'Support Request').trim();
+      const originalMessage = String(req.body?.originalMessage || '').trim();
+      const replyText = String(req.body?.replyText || '').trim();
+
+      if (!toEmail || !toEmail.includes('@') || !replyText) {
+        res.status(400).json({
+          sent: false,
+          error: 'Recipient email and reply message are required.',
+        });
+        return;
+      }
+
+      const smtpUser = (process.env.SMTP_USER || '').trim();
+      const smtpPass = (process.env.SMTP_PASS || '').trim();
+      const smtpHost = (process.env.SMTP_HOST || '').trim() || 'smtp.gmail.com';
+      const smtpPort = Number(process.env.SMTP_PORT) || 465;
+
+      if (!smtpUser || !smtpPass) {
+        res.status(503).json({
+          sent: false,
+          configured: false,
+          error: 'SMTP credentials (SMTP_USER, SMTP_PASS) are not configured on the server.',
+        });
+        return;
+      }
+
+      const transporter = nodemailer.createTransport({
+        host: smtpHost,
+        port: smtpPort,
+        secure: smtpPort === 465,
+        auth: {
+          user: smtpUser,
+          pass: smtpPass,
+        },
+      });
+
+      const emailSubject = subject.toLowerCase().startsWith('re:') ? subject : `Re: ${subject}`;
+      const fromAddress = (process.env.SMTP_FROM || '').trim() || `Notes Support <${smtpUser}>`;
+
+      const textBody = [
+        `Hi ${userName},`,
+        '',
+        replyText,
+        '',
+        '---',
+        `Your message (${subject}):`,
+        originalMessage,
+        '',
+        'Best regards,',
+        'Notes Support',
+      ].join('\n');
+
+      const htmlBody = `
+        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: #1f2937; max-width: 560px; line-height: 1.6;">
+          <p>Hi ${escapeHtml(userName)},</p>
+          <div style="white-space: pre-wrap; margin: 16px 0;">${escapeHtml(replyText)}</div>
+          <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 24px 0;" />
+          <p style="font-size: 12px; color: #6b7280; margin-bottom: 6px;">Your message (${escapeHtml(subject)}):</p>
+          <blockquote style="margin: 0; padding-left: 12px; border-left: 3px solid #d1d5db; color: #4b5563; font-size: 13px; white-space: pre-wrap;">${escapeHtml(originalMessage)}</blockquote>
+          <p style="font-size: 13px; color: #6b7280; margin-top: 24px;">Best regards,<br />Notes Support</p>
+        </div>
+      `;
+
+      await transporter.sendMail({
+        from: fromAddress,
+        replyTo: ADMIN_EMAIL,
+        to: toEmail,
+        subject: emailSubject,
+        text: textBody,
+        html: htmlBody,
+      });
+
+      res.json({ sent: true, configured: true });
+    } catch (err) {
+      res.status(500).json({
+        sent: false,
+        configured: true,
+        error: err instanceof Error ? err.message : 'Failed to send reply email.',
+      });
+    }
   });
 
   if (process.env.NODE_ENV !== 'production') {

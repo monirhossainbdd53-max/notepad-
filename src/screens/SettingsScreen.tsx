@@ -1,13 +1,13 @@
 import React, { useState } from 'react';
 import {
   Bell,
+  CalendarClock,
   CheckCircle2,
   ChevronRight,
   Cloud,
   CloudDownload,
   CloudUpload,
   Crown,
-  Download,
   FileText,
   HelpCircle,
   Info,
@@ -47,6 +47,9 @@ export function SettingsScreen() {
     signInGoogleAccount,
     backupToGoogleDrive,
     restoreFromGoogleDrive,
+    autoBackup,
+    updateAutoBackupSchedule,
+    disableAutoBackupSchedule,
     restorePurchase,
     navigate,
     showToast,
@@ -54,6 +57,9 @@ export function SettingsScreen() {
 
   const [notifOpen, setNotifOpen] = useState(false);
   const [backupOpen, setBackupOpen] = useState(false);
+  const [autoBackupOpen, setAutoBackupOpen] = useState(false);
+  const [autoMonthsInput, setAutoMonthsInput] = useState('');
+  const [autoDaysInput, setAutoDaysInput] = useState('');
   const [driveBackupConfirmOpen, setDriveBackupConfirmOpen] = useState(false);
   const [driveRestoreConfirmOpen, setDriveRestoreConfirmOpen] = useState(false);
   const [restoreOpen, setRestoreOpen] = useState(false);
@@ -103,6 +109,39 @@ export function SettingsScreen() {
     } finally {
       setExportingFormat(null);
     }
+  };
+
+  const handleBackUpNowAndDownloadPdf = async () => {
+    await backupToGoogleDrive();
+    await handleExportZip('pdf');
+  };
+
+  const autoBackupStatusLabel = (() => {
+    if (!autoBackup.enabled || (autoBackup.months <= 0 && autoBackup.days <= 0)) {
+      return 'Off';
+    }
+    const parts: string[] = [];
+    if (autoBackup.months > 0) parts.push(`${autoBackup.months}m`);
+    if (autoBackup.days > 0) parts.push(`${autoBackup.days}d`);
+    return `Every ${parts.join(' ')}`;
+  })();
+
+  const handleOpenAutoBackupDialog = () => {
+    setAutoMonthsInput(autoBackup.months > 0 ? String(autoBackup.months) : '');
+    setAutoDaysInput(autoBackup.days > 0 ? String(autoBackup.days) : '');
+    setAutoBackupOpen(true);
+  };
+
+  const handleSaveAutoBackup = (e: React.FormEvent) => {
+    e.preventDefault();
+    const months = Math.max(0, Math.floor(Number(autoMonthsInput || '0')));
+    const days = Math.max(0, Math.floor(Number(autoDaysInput || '0')));
+    if (months === 0 && days === 0) {
+      showToast('Enter at least 1 month or 1 day', 'danger');
+      return;
+    }
+    updateAutoBackupSchedule(months, days);
+    setAutoBackupOpen(false);
   };
 
   const handleNotePinClick = () => {
@@ -229,11 +268,11 @@ export function SettingsScreen() {
           <h2 className="px-1 mb-2 text-xs font-semibold text-[var(--text-secondary)]">
             Storage
           </h2>
-          <div className="rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)]">
+          <div className="rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] divide-y divide-[var(--divider)] overflow-hidden">
             <button
               type="button"
               onClick={() => setBackupOpen(true)}
-              className="flex w-full min-h-[54px] items-center justify-between px-4 text-left hover:bg-[var(--bg-subtle)]/50 transition-colors cursor-pointer rounded-2xl"
+              className="flex w-full min-h-[54px] items-center justify-between px-4 text-left hover:bg-[var(--bg-subtle)]/50 transition-colors cursor-pointer"
             >
               <span className="flex items-center gap-3 text-sm font-medium">
                 <Cloud className="h-4 w-4 text-[var(--text-secondary)]" strokeWidth={1.85} />
@@ -241,6 +280,21 @@ export function SettingsScreen() {
               </span>
               <span className="flex items-center gap-1.5 text-xs text-[var(--text-secondary)]">
                 <span>{!isGuest ? 'Google Drive' : 'Local'}</span>
+                <ChevronRight className="h-4 w-4" strokeWidth={1.75} />
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleOpenAutoBackupDialog}
+              className="flex w-full min-h-[54px] items-center justify-between px-4 text-left hover:bg-[var(--bg-subtle)]/50 transition-colors cursor-pointer"
+            >
+              <span className="flex items-center gap-3 text-sm font-medium">
+                <CalendarClock className="h-4 w-4 text-[var(--text-secondary)]" strokeWidth={1.85} />
+                Auto Backup Date
+              </span>
+              <span className="flex items-center gap-1.5 text-xs text-[var(--text-secondary)]">
+                <span>{autoBackupStatusLabel}</span>
                 <ChevronRight className="h-4 w-4" strokeWidth={1.75} />
               </span>
             </button>
@@ -456,13 +510,6 @@ export function SettingsScreen() {
         onClose={() => setBackupOpen(false)}
       >
         <div className="space-y-4">
-          <div className="rounded-2xl bg-[var(--bg-canvas)] border border-[var(--divider)] p-4 space-y-1.5">
-            <p className="text-sm font-semibold">Local Device Storage</p>
-            <p className="text-xs text-[var(--text-secondary)] tabular-nums">
-              {notes.length} total notes across {folders.length} folders are saved on this device.
-            </p>
-          </div>
-
           <div className="rounded-2xl bg-[var(--bg-canvas)] border border-[var(--divider)] p-4 space-y-3">
             <div>
               <p className="text-sm font-semibold">Google Drive Backup</p>
@@ -481,11 +528,11 @@ export function SettingsScreen() {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                 <button
                   type="button"
-                  disabled={driveBusy}
+                  disabled={driveBusy || exportingFormat === 'pdf'}
                   onClick={() => setDriveBackupConfirmOpen(true)}
                   className="flex w-full min-h-[42px] items-center justify-center gap-2 rounded-xl bg-[var(--accent-primary)] px-3 text-xs font-semibold text-white dark:text-[#171717] disabled:opacity-60 cursor-pointer"
                 >
-                  {driveBusy ? (
+                  {driveBusy || exportingFormat === 'pdf' ? (
                     <Loader2 className="h-3.5 w-3.5 animate-spin" />
                   ) : (
                     <CloudUpload className="h-3.5 w-3.5" strokeWidth={2} />
@@ -509,50 +556,92 @@ export function SettingsScreen() {
             )}
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-            <button
-              type="button"
-              disabled={Boolean(exportingFormat)}
-              onClick={() => {
-                void handleExportZip('txt');
-              }}
-              className="flex w-full min-h-[46px] items-center justify-center gap-2 rounded-xl border border-[var(--divider)] bg-[var(--bg-canvas)] px-4 text-sm font-semibold text-[var(--text-primary)] hover:bg-[var(--bg-subtle)] disabled:opacity-60 transition-colors cursor-pointer"
-            >
-              {exportingFormat === 'txt' ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <FileText className="h-4 w-4" strokeWidth={2} />
-              )}
-              Download Text (.zip)
-            </button>
+          <button
+            type="button"
+            disabled={Boolean(exportingFormat)}
+            onClick={() => {
+              void handleExportZip('txt');
+            }}
+            className="flex w-full min-h-[46px] items-center justify-center gap-2 rounded-xl border border-[var(--divider)] bg-[var(--bg-canvas)] px-4 text-sm font-semibold text-[var(--text-primary)] hover:bg-[var(--bg-subtle)] disabled:opacity-60 transition-colors cursor-pointer"
+          >
+            {exportingFormat === 'txt' ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <FileText className="h-4 w-4" strokeWidth={2} />
+            )}
+            Download Text (.zip)
+          </button>
+        </div>
+      </InfoSheetDialog>
 
+      <InfoSheetDialog
+        open={autoBackupOpen}
+        title="Auto Backup Date"
+        onClose={() => setAutoBackupOpen(false)}
+      >
+        <form onSubmit={handleSaveAutoBackup} className="space-y-4">
+          {autoBackup.enabled && autoBackup.nextBackupAt && (
+            <div className="rounded-xl bg-[var(--bg-canvas)] border border-[var(--divider)] px-3.5 py-2.5 text-xs text-[var(--text-secondary)]">
+              Next auto PDF backup: <span className="font-medium text-[var(--text-primary)]">{formatFullDate(autoBackup.nextBackupAt)}</span>
+            </div>
+          )}
+
+          <div className="grid grid-cols-2 gap-2.5">
+            <input
+              type="number"
+              min={0}
+              max={120}
+              inputMode="numeric"
+              value={autoMonthsInput}
+              onChange={(e) => setAutoMonthsInput(e.target.value)}
+              placeholder="Months"
+              aria-label="Months"
+              className="w-full min-h-[44px] rounded-xl bg-[var(--bg-canvas)] border border-[var(--divider)] px-3.5 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-primary)]"
+            />
+            <input
+              type="number"
+              min={0}
+              max={365}
+              inputMode="numeric"
+              value={autoDaysInput}
+              onChange={(e) => setAutoDaysInput(e.target.value)}
+              placeholder="Days"
+              aria-label="Days"
+              className="w-full min-h-[44px] rounded-xl bg-[var(--bg-canvas)] border border-[var(--divider)] px-3.5 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-primary)]"
+            />
+          </div>
+
+          <div className="flex gap-2.5">
+            {autoBackup.enabled && (
+              <button
+                type="button"
+                onClick={() => {
+                  disableAutoBackupSchedule();
+                  setAutoBackupOpen(false);
+                }}
+                className="flex-1 min-h-[44px] rounded-xl bg-[#E45B5B]/10 text-sm font-semibold text-[#E45B5B] cursor-pointer"
+              >
+                Turn Off
+              </button>
+            )}
             <button
-              type="button"
-              disabled={Boolean(exportingFormat)}
-              onClick={() => {
-                void handleExportZip('pdf');
-              }}
-              className="flex w-full min-h-[46px] items-center justify-center gap-2 rounded-xl bg-[var(--text-primary)] dark:bg-[var(--accent-primary)] px-4 text-sm font-semibold text-[var(--bg-card)] dark:text-[#171717] disabled:opacity-60 transition-opacity hover:opacity-90 cursor-pointer"
+              type="submit"
+              className="flex-1 min-h-[44px] rounded-xl bg-[var(--text-primary)] dark:bg-[var(--accent-primary)] text-sm font-semibold text-[var(--bg-card)] dark:text-[#171717] cursor-pointer"
             >
-              {exportingFormat === 'pdf' ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Download className="h-4 w-4" strokeWidth={2} />
-              )}
-              Download PDF (.zip)
+              Save Schedule
             </button>
           </div>
-        </div>
+        </form>
       </InfoSheetDialog>
 
       <ConfirmDialog
         open={driveBackupConfirmOpen}
-        title="Back up to Google Drive?"
-        description={`This will save your ${notes.length} notes and ${folders.length} folders to notes-app-backup.json in your Google Drive (${account.email}).`}
+        title="Back up & download PDF ZIP?"
+        description={`This will save your ${notes.length} notes and ${folders.length} folders to Google Drive (${account.email}) and download a PDF ZIP of your notes.`}
         confirmLabel="Back Up Now"
         danger={false}
         onConfirm={() => {
-          void backupToGoogleDrive();
+          void handleBackUpNowAndDownloadPdf();
         }}
         onClose={() => setDriveBackupConfirmOpen(false)}
       />
