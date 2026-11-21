@@ -7,11 +7,12 @@ import { Folder, Note } from '../types/notes';
 import { extractNoteImages, formatFullDate, stripHtmlToText } from './noteHelpers';
 
 interface ParsedPdfBlock {
-  type: 'heading' | 'paragraph' | 'bullet' | 'numbered' | 'checklist' | 'quote' | 'divider' | 'image';
+  type: 'heading' | 'paragraph' | 'bullet' | 'numbered' | 'checklist' | 'quote' | 'divider' | 'image' | 'table';
   text?: string;
   checked?: boolean;
   index?: number;
   src?: string;
+  rows?: { cells: string[]; isHeader: boolean }[];
 }
 
 function sanitizeFileName(raw: string, fallback: string): string {
@@ -226,12 +227,18 @@ function parseHtmlToPdfBlocks(note: Note): ParsedPdfBlock[] {
     }
 
     if (tag === 'table') {
-      Array.from(el.querySelectorAll('tr')).forEach((tr) => {
-        const cells = Array.from(tr.querySelectorAll('th, td'))
-          .map((c) => (c.textContent || '').trim())
-          .join('  |  ');
-        if (cells.trim()) blocks.push({ type: 'paragraph', text: cells });
+      const tableRows: { cells: string[]; isHeader: boolean }[] = [];
+      Array.from(el.querySelectorAll('tr')).forEach((tr, rowIdx) => {
+        const cellEls = Array.from(tr.querySelectorAll('th, td'));
+        const cells = cellEls.map((c) => (c.textContent || '').replace(/\u00a0/g, ' ').trim());
+        if (cells.length > 0) {
+          const hasTh = cellEls.some((c) => c.tagName.toLowerCase() === 'th');
+          tableRows.push({ cells, isHeader: hasTh || rowIdx === 0 });
+        }
       });
+      if (tableRows.length > 0) {
+        blocks.push({ type: 'table', rows: tableRows });
+      }
       return;
     }
 
@@ -444,6 +451,63 @@ async function renderNoteToPdfBytes(note: Note, folderName: string): Promise<Uin
       } catch {
         // Ignore tainted cross-origin images
       }
+      continue;
+    }
+
+    if (block.type === 'table' && block.rows && block.rows.length > 0) {
+      const colCount = Math.max(...block.rows.map((r) => r.cells.length), 1);
+      const colWidth = contentWidth / colCount;
+      const cellPadX = 14;
+      const cellPadY = 12;
+      const rowLineH = 34;
+
+      for (const row of block.rows) {
+        const rowFont = `${row.isHeader ? '700' : '400'} 23px ${fontFamily}`;
+        page.ctx.font = rowFont;
+        const wrappedCells = Array.from({ length: colCount }, (_, colIdx) => {
+          const val = row.cells[colIdx] || '';
+          return val ? wrapCanvasText(page.ctx, val, Math.max(40, colWidth - cellPadX * 2)) : [''];
+        });
+        const maxLines = Math.max(...wrappedCells.map((lines) => lines.length), 1);
+        const rowHeight = maxLines * rowLineH + cellPadY * 2;
+
+        ensureSpace(rowHeight + 6);
+
+        if (row.isHeader) {
+          page.ctx.fillStyle = '#F3F4F6';
+          page.ctx.fillRect(marginX, page.y, contentWidth, rowHeight);
+        }
+
+        page.ctx.strokeStyle = '#D1D5DB';
+        page.ctx.lineWidth = 1.5;
+        page.ctx.strokeRect(marginX, page.y, contentWidth, rowHeight);
+
+        for (let colIdx = 0; colIdx < colCount; colIdx += 1) {
+          const cellX = marginX + colIdx * colWidth;
+          if (colIdx > 0) {
+            page.ctx.beginPath();
+            page.ctx.moveTo(cellX, page.y);
+            page.ctx.lineTo(cellX, page.y + rowHeight);
+            page.ctx.stroke();
+          }
+
+          page.ctx.font = rowFont;
+          page.ctx.fillStyle = row.isHeader ? '#111827' : '#1F2937';
+          const lines = wrappedCells[colIdx];
+          lines.forEach((line, lineIdx) => {
+            if (line) {
+              page.ctx.fillText(
+                line,
+                cellX + cellPadX,
+                page.y + cellPadY + 23 + lineIdx * rowLineH
+              );
+            }
+          });
+        }
+
+        page.y += rowHeight;
+      }
+      page.y += 20;
       continue;
     }
 
@@ -660,4 +724,68 @@ export async function exportNotesAsPdfZip(
   const dateTag = new Date().toISOString().slice(0, 10);
   const mode = await saveAndShareZip(zip, `notes-pdf-${dateTag}.zip`, options);
   return { count: exportable.length, mode };
+}
+
+function uint8ArrayToBase64(bytes: Uint8Array): string {
+  const chunkSize = 0x8000;
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    const slice = bytes.subarray(i, Math.min(i + chunkSize, bytes.length));
+    binary += String.fromCharCode(...slice);
+  }
+  return btoa(binary);
+}
+
+export async function exportSingleNoteAsPdf(
+  note: Note,
+  folderName: string
+): Promise<{ fileName: string; mode: 'shared' | 'downloaded'; savedToDocuments: boolean }> {
+  const baseName = sanitizeFileName(note.title, 'Untitled Note');
+  const fileName = `${baseName}.pdf`;
+  const pdfBytes = await renderNoteToPdfBytes(note, folderName || 'Notes');
+
+  if (Capacitor.isNativePlatform()) {
+    const base64Data = uint8ArrayToBase64(pdfBytes);
+
+    let savedToDocuments = false;
+    try {
+      await Filesystem.writeFile({
+        path: `Notes/${fileName}`,
+        data: base64Data,
+        directory: Directory.Documents,
+        recursive: true,
+      });
+      savedToDocuments = true;
+    } catch {
+      // Cache + Share works across all Android versions without extra storage permissions
+    }
+
+    const cached = await Filesystem.writeFile({
+      path: fileName,
+      data: base64Data,
+      directory: Directory.Cache,
+      recursive: true,
+    });
+
+    await Share.share({
+      title: note.title.trim() || 'Untitled Note',
+      files: [cached.uri],
+      dialogTitle: `Save or share ${fileName}`,
+    });
+
+    return { fileName, mode: 'shared', savedToDocuments };
+  }
+
+  const copy = new Uint8Array(pdfBytes.byteLength);
+  copy.set(pdfBytes);
+  const blob = new Blob([copy.buffer], { type: 'application/pdf' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+  return { fileName, mode: 'downloaded', savedToDocuments: false };
 }

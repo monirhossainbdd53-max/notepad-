@@ -23,6 +23,7 @@ import {
   Redo2,
   Strikethrough,
   Table2,
+  Trash2,
   Underline,
   Undo2,
   X,
@@ -31,7 +32,7 @@ import { Capacitor } from '@capacitor/core';
 import { SpeechRecognition as NativeSpeechRecognition } from '@capacitor-community/speech-recognition';
 import { useBackHandler, useNotes } from '../context/NotesContext';
 import { TEXT_TOOLS_CATALOG, TextToolMeta } from '../services/textToolsService';
-import { FREE_LIMITS, TextToolId } from '../types/notes';
+import { TextToolId } from '../types/notes';
 import {
   readAndCompressImage,
   sanitizeNoteThemeElements,
@@ -179,6 +180,12 @@ export function RichTextEditor({
   const [tableModalOpen, setTableModalOpen] = useState(false);
   const [tableColsInput, setTableColsInput] = useState('3');
   const [tableRowsInput, setTableRowsInput] = useState('3');
+  const activeTableCellRef = useRef<HTMLTableCellElement | null>(null);
+  const [activeTableContext, setActiveTableContext] = useState<{
+    rowCount: number;
+    colCount: number;
+    isHeaderRow: boolean;
+  } | null>(null);
   const [linkModalOpen, setLinkModalOpen] = useState(false);
   const [linkUrl, setLinkUrl] = useState('');
   const [linkText, setLinkText] = useState('');
@@ -211,6 +218,48 @@ export function RichTextEditor({
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
 
+  const syncActiveTableFromNode = useCallback((node: Node | null) => {
+    const editor = editorRef.current;
+    if (!editor || !node || !editor.contains(node)) {
+      activeTableCellRef.current = null;
+      setActiveTableContext((prev) => (prev ? null : prev));
+      return;
+    }
+
+    const baseEl =
+      node.nodeType === Node.TEXT_NODE
+        ? node.parentElement
+        : (node as HTMLElement | null);
+    const cell = baseEl?.closest('td, th') as HTMLTableCellElement | null;
+    const table = cell?.closest('table') as HTMLTableElement | null;
+    const tr = cell?.closest('tr') as HTMLTableRowElement | null;
+
+    if (!cell || !table || !tr || !editor.contains(table)) {
+      activeTableCellRef.current = null;
+      setActiveTableContext((prev) => (prev ? null : prev));
+      return;
+    }
+
+    activeTableCellRef.current = cell;
+    const nextCtx = {
+      rowCount: table.querySelectorAll('tr').length,
+      colCount: tr.children.length,
+      isHeaderRow: Boolean(cell.closest('thead')),
+    };
+
+    setActiveTableContext((prev) => {
+      if (
+        prev &&
+        prev.rowCount === nextCtx.rowCount &&
+        prev.colCount === nextCtx.colCount &&
+        prev.isHeaderRow === nextCtx.isHeaderRow
+      ) {
+        return prev;
+      }
+      return nextCtx;
+    });
+  }, []);
+
   const saveSelection = useCallback(() => {
     const editor = editorRef.current;
     if (!editor) return;
@@ -219,8 +268,9 @@ export function RichTextEditor({
     const range = sel.getRangeAt(0);
     if (editor.contains(range.commonAncestorContainer)) {
       savedRangeRef.current = range.cloneRange();
+      syncActiveTableFromNode(range.commonAncestorContainer);
     }
-  }, []);
+  }, [syncActiveTableFromNode]);
 
   useEffect(() => {
     if (!editorRef.current) return;
@@ -229,6 +279,8 @@ export function RichTextEditor({
       historyRef.current = [editorRef.current.innerHTML];
       historyIndexRef.current = 0;
       savedRangeRef.current = null;
+      activeTableCellRef.current = null;
+      setActiveTableContext(null);
       setCanUndo(false);
       setCanRedo(false);
     }
@@ -249,11 +301,12 @@ export function RichTextEditor({
       const range = sel.getRangeAt(0);
       if (editor.contains(range.commonAncestorContainer)) {
         savedRangeRef.current = range.cloneRange();
+        syncActiveTableFromNode(range.commonAncestorContainer);
       }
     };
     document.addEventListener('selectionchange', handleSelectionChange);
     return () => document.removeEventListener('selectionchange', handleSelectionChange);
-  }, []);
+  }, [syncActiveTableFromNode]);
 
   useEffect(() => {
     const onOutside = (e: MouseEvent) => {
@@ -658,6 +711,184 @@ export function RichTextEditor({
     emitChange();
   };
 
+  const focusTableCell = (cell: HTMLTableCellElement | null) => {
+    const editor = editorRef.current;
+    if (!editor || !cell || !editor.contains(cell)) return;
+    editor.focus();
+    const sel = window.getSelection();
+    if (!sel) return;
+    const range = document.createRange();
+    range.selectNodeContents(cell);
+    range.collapse(true);
+    sel.removeAllRanges();
+    sel.addRange(range);
+    savedRangeRef.current = range.cloneRange();
+    syncActiveTableFromNode(cell);
+  };
+
+  const getActiveTableParts = () => {
+    const editor = editorRef.current;
+    let cell = activeTableCellRef.current;
+    if (!cell || !editor?.contains(cell)) {
+      const node = savedRangeRef.current?.commonAncestorContainer;
+      if (node && editor?.contains(node)) {
+        const baseEl =
+          node.nodeType === Node.TEXT_NODE
+            ? node.parentElement
+            : (node as HTMLElement | null);
+        cell = baseEl?.closest('td, th') as HTMLTableCellElement | null;
+      }
+    }
+    if (!cell || !editor?.contains(cell)) return null;
+    const tr = cell.closest('tr') as HTMLTableRowElement | null;
+    const table = cell.closest('table') as HTMLTableElement | null;
+    if (!tr || !table || !editor.contains(table)) return null;
+    return { cell, tr, table };
+  };
+
+  const handleTableAddRow = () => {
+    const parts = getActiveTableParts();
+    if (!parts) return;
+    const { cell, tr, table } = parts;
+    const colIdx = Math.max(0, Array.from(tr.children).indexOf(cell));
+    const colCount = tr.children.length || table.rows[0]?.cells.length || 1;
+
+    const newTr = document.createElement('tr');
+    for (let i = 0; i < colCount; i += 1) {
+      const td = document.createElement('td');
+      td.innerHTML = '<br>';
+      newTr.appendChild(td);
+    }
+
+    if (tr.closest('thead')) {
+      let tbody = table.querySelector('tbody');
+      if (!tbody) {
+        tbody = document.createElement('tbody');
+        table.appendChild(tbody);
+      }
+      tbody.insertBefore(newTr, tbody.firstChild);
+    } else {
+      tr.parentNode?.insertBefore(newTr, tr.nextSibling);
+    }
+
+    const nextCell =
+      (newTr.children[Math.min(colIdx, newTr.children.length - 1)] as HTMLTableCellElement) ||
+      null;
+    focusTableCell(nextCell);
+    emitChange();
+  };
+
+  const handleTableDeleteRow = () => {
+    const parts = getActiveTableParts();
+    if (!parts) return;
+    const { cell, tr, table } = parts;
+    if (tr.closest('thead')) return;
+    const totalRows = table.querySelectorAll('tr').length;
+    if (totalRows <= 1) return;
+
+    const colIdx = Math.max(0, Array.from(tr.children).indexOf(cell));
+    const siblingRow =
+      (tr.nextElementSibling as HTMLTableRowElement | null) ||
+      (tr.previousElementSibling as HTMLTableRowElement | null) ||
+      (table.querySelector('thead tr') as HTMLTableRowElement | null);
+
+    tr.remove();
+
+    const nextCell = siblingRow
+      ? ((siblingRow.children[
+          Math.min(colIdx, siblingRow.children.length - 1)
+        ] as HTMLTableCellElement) || null)
+      : null;
+    focusTableCell(nextCell);
+    emitChange();
+  };
+
+  const handleTableAddColumn = () => {
+    const parts = getActiveTableParts();
+    if (!parts) return;
+    const { cell, tr, table } = parts;
+    const colIdx = Math.max(0, Array.from(tr.children).indexOf(cell));
+    const allRows = Array.from(table.querySelectorAll('tr'));
+    let focusTarget: HTMLTableCellElement | null = null;
+
+    allRows.forEach((row) => {
+      const isHead =
+        Boolean(row.closest('thead')) || row.firstElementChild?.tagName === 'TH';
+      const newCell = document.createElement(isHead ? 'th' : 'td') as HTMLTableCellElement;
+      if (isHead) {
+        newCell.textContent = `Column ${row.children.length + 1}`;
+      } else {
+        newCell.innerHTML = '<br>';
+      }
+      const refCell = row.children[colIdx] || null;
+      row.insertBefore(newCell, refCell ? refCell.nextSibling : null);
+      if (row === tr) {
+        focusTarget = newCell;
+      }
+    });
+
+    focusTableCell(focusTarget);
+    emitChange();
+  };
+
+  const handleTableDeleteColumn = () => {
+    const parts = getActiveTableParts();
+    if (!parts) return;
+    const { cell, tr, table } = parts;
+    if (tr.children.length <= 1) return;
+
+    const colIdx = Math.max(0, Array.from(tr.children).indexOf(cell));
+    const allRows = Array.from(table.querySelectorAll('tr'));
+
+    allRows.forEach((row) => {
+      const targetCell = row.children[colIdx];
+      if (targetCell) {
+        targetCell.remove();
+      }
+    });
+
+    const nextCell =
+      (tr.children[Math.min(colIdx, tr.children.length - 1)] as HTMLTableCellElement) || null;
+    focusTableCell(nextCell);
+    emitChange();
+  };
+
+  const handleTableDeleteWhole = () => {
+    const parts = getActiveTableParts();
+    const editor = editorRef.current;
+    if (!parts || !editor) return;
+    const { table } = parts;
+    const removeTarget = table.closest('.note-table-wrap') || table;
+
+    let nextEditable = removeTarget.nextElementSibling as HTMLElement | null;
+    if (!nextEditable) {
+      nextEditable = document.createElement('p');
+      nextEditable.innerHTML = '<br>';
+      removeTarget.parentNode?.insertBefore(nextEditable, removeTarget.nextSibling);
+    }
+
+    removeTarget.remove();
+    activeTableCellRef.current = null;
+    setActiveTableContext(null);
+
+    editor.focus();
+    try {
+      const sel = window.getSelection();
+      if (sel && nextEditable) {
+        const range = document.createRange();
+        range.setStart(nextEditable, 0);
+        range.collapse(true);
+        sel.removeAllRanges();
+        sel.addRange(range);
+        savedRangeRef.current = range.cloneRange();
+      }
+    } catch {
+      // Ignore selection placement errors
+    }
+
+    emitChange();
+  };
+
   const handleOpenLinkModal = () => {
     saveSelection();
     setInsertMenuOpen(false);
@@ -697,7 +928,9 @@ export function RichTextEditor({
     const totalCount = getTotalImageCount();
     if (!isPremium && totalCount >= maxImagesAllowed) {
       requestUpgrade(
-        `Free plan allows ${FREE_LIMITS.maxImagesPerNote} image or sketch per note. Upgrade to Notes Premium for unlimited media.`
+        maxImagesAllowed <= 0
+          ? 'Images & sketches require Notes Premium. Upgrade for unlimited media.'
+          : `Free plan allows ${maxImagesAllowed} ${maxImagesAllowed === 1 ? 'image or sketch' : 'images or sketches'} per note. Upgrade to Notes Premium for unlimited media.`
       );
       return;
     }
@@ -1143,7 +1376,9 @@ export function RichTextEditor({
     const totalCount = getTotalImageCount();
     if (!isPremium && totalCount >= maxImagesAllowed) {
       requestUpgrade(
-        `Free plan allows ${FREE_LIMITS.maxImagesPerNote} image per note. Upgrade to Notes Premium for unlimited images.`
+        maxImagesAllowed <= 0
+          ? 'Adding images requires Notes Premium. Upgrade for unlimited images.'
+          : `Free plan allows ${maxImagesAllowed} ${maxImagesAllowed === 1 ? 'image' : 'images'} per note. Upgrade to Notes Premium for unlimited images.`
       );
       return;
     }
@@ -1160,7 +1395,9 @@ export function RichTextEditor({
     const remainingSlots = isPremium ? files.length : Math.max(0, maxImagesAllowed - totalCount);
     if (remainingSlots <= 0) {
       requestUpgrade(
-        `Free plan allows ${FREE_LIMITS.maxImagesPerNote} image per note. Upgrade to Notes Premium for unlimited images.`
+        maxImagesAllowed <= 0
+          ? 'Adding images requires Notes Premium. Upgrade for unlimited images.'
+          : `Free plan allows ${maxImagesAllowed} ${maxImagesAllowed === 1 ? 'image' : 'images'} per note. Upgrade to Notes Premium for unlimited images.`
       );
       return;
     }
@@ -1179,7 +1416,7 @@ export function RichTextEditor({
       insertImageBlocksAtSavedRange(loaded);
       if (!isPremium && files.length > remainingSlots) {
         requestUpgrade(
-          `Only ${FREE_LIMITS.maxImagesPerNote} image was attached on the Free plan. Upgrade for unlimited images.`
+          `Only ${maxImagesAllowed} ${maxImagesAllowed === 1 ? 'image was' : 'images were'} attached on the Free plan. Upgrade for unlimited images.`
         );
       }
     }
@@ -1201,7 +1438,9 @@ export function RichTextEditor({
       const totalCount = getTotalImageCount();
       if (!isPremium && totalCount >= maxImagesAllowed) {
         requestUpgrade(
-          `Free plan allows ${FREE_LIMITS.maxImagesPerNote} image per note. Upgrade to Notes Premium for unlimited images.`
+          maxImagesAllowed <= 0
+            ? 'Adding images requires Notes Premium. Upgrade for unlimited images.'
+            : `Free plan allows ${maxImagesAllowed} ${maxImagesAllowed === 1 ? 'image' : 'images'} per note. Upgrade to Notes Premium for unlimited images.`
         );
         return;
       }
@@ -1251,6 +1490,8 @@ export function RichTextEditor({
     window.setTimeout(() => {
       isInternalChangeRef.current = false;
     }, 0);
+    activeTableCellRef.current = null;
+    setActiveTableContext(null);
     setCanUndo(historyIndexRef.current > 0);
     setCanRedo(historyIndexRef.current < historyRef.current.length - 1);
     updateToolbarState();
@@ -1266,6 +1507,8 @@ export function RichTextEditor({
     window.setTimeout(() => {
       isInternalChangeRef.current = false;
     }, 0);
+    activeTableCellRef.current = null;
+    setActiveTableContext(null);
     setCanUndo(historyIndexRef.current > 0);
     setCanRedo(historyIndexRef.current < historyRef.current.length - 1);
     updateToolbarState();
@@ -1344,7 +1587,11 @@ export function RichTextEditor({
           type="text"
           value={title}
           onChange={(e) => onChangeTitle(e.target.value)}
-          onFocus={() => setIsBodyFocused(false)}
+          onFocus={() => {
+            setIsBodyFocused(false);
+            activeTableCellRef.current = null;
+            setActiveTableContext(null);
+          }}
           placeholder="Note title"
           aria-label="Note title"
           className={`w-full bg-transparent text-2xl sm:text-[28px] font-bold tracking-tight text-[var(--text-primary)] placeholder:text-[var(--text-secondary)]/60 focus:outline-none ${
@@ -1578,6 +1825,81 @@ export function RichTextEditor({
                 Stop
               </button>
             </div>
+          </div>
+        )}
+
+        {activeTableContext && (
+          <div className="mb-2 flex items-center justify-between gap-2 rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] px-2.5 py-1.5">
+            <div className="flex items-center gap-1 overflow-x-auto no-scrollbar min-w-0">
+              <button
+                type="button"
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  handleTableAddRow();
+                }}
+                aria-label="Add row"
+                className="inline-flex min-h-[32px] items-center gap-1 rounded-xl bg-[var(--bg-subtle)] px-2.5 text-xs font-semibold text-[var(--text-primary)] hover:bg-[var(--accent-soft)] hover:text-[var(--accent-primary)] transition-colors shrink-0 cursor-pointer"
+              >
+                <Plus className="h-3.5 w-3.5" strokeWidth={2.2} />
+                <span>Row</span>
+              </button>
+
+              <button
+                type="button"
+                disabled={activeTableContext.isHeaderRow || activeTableContext.rowCount <= 1}
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  handleTableDeleteRow();
+                }}
+                aria-label="Delete row"
+                className="inline-flex min-h-[32px] items-center gap-1 rounded-xl bg-[var(--bg-subtle)] px-2.5 text-xs font-semibold text-[var(--text-primary)] hover:bg-[#E45B5B]/12 hover:text-[#E45B5B] disabled:opacity-35 disabled:cursor-not-allowed transition-colors shrink-0 cursor-pointer"
+              >
+                <Minus className="h-3.5 w-3.5" strokeWidth={2.2} />
+                <span>Row</span>
+              </button>
+
+              <div className="mx-0.5 h-4 w-px bg-[var(--divider)] shrink-0" />
+
+              <button
+                type="button"
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  handleTableAddColumn();
+                }}
+                aria-label="Add column"
+                className="inline-flex min-h-[32px] items-center gap-1 rounded-xl bg-[var(--bg-subtle)] px-2.5 text-xs font-semibold text-[var(--text-primary)] hover:bg-[var(--accent-soft)] hover:text-[var(--accent-primary)] transition-colors shrink-0 cursor-pointer"
+              >
+                <Plus className="h-3.5 w-3.5" strokeWidth={2.2} />
+                <span>Col</span>
+              </button>
+
+              <button
+                type="button"
+                disabled={activeTableContext.colCount <= 1}
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  handleTableDeleteColumn();
+                }}
+                aria-label="Delete column"
+                className="inline-flex min-h-[32px] items-center gap-1 rounded-xl bg-[var(--bg-subtle)] px-2.5 text-xs font-semibold text-[var(--text-primary)] hover:bg-[#E45B5B]/12 hover:text-[#E45B5B] disabled:opacity-35 disabled:cursor-not-allowed transition-colors shrink-0 cursor-pointer"
+              >
+                <Minus className="h-3.5 w-3.5" strokeWidth={2.2} />
+                <span>Col</span>
+              </button>
+            </div>
+
+            <button
+              type="button"
+              onMouseDown={(e) => {
+                e.preventDefault();
+                handleTableDeleteWhole();
+              }}
+              aria-label="Delete table"
+              title="Delete table"
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-[#E45B5B]/10 text-[#E45B5B] hover:bg-[#E45B5B]/20 transition-colors cursor-pointer"
+            >
+              <Trash2 className="h-3.5 w-3.5" strokeWidth={2} />
+            </button>
           </div>
         )}
 

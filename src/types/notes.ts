@@ -178,3 +178,47 @@ export interface TextToolsConfig {
   updatedAt: string;
   updatedBy?: string;
 }
+
+export interface FreeLimitsConfig {
+  maxActiveNotes: number;
+  maxFolders: number;
+  maxImagesPerNote: number;
+}
+
+export type AnnouncementActionTarget = 'none' | 'premium' | 'about' | 'help';
+
+export interface AnnouncementBannerConfig {
+  enabled: boolean;
+  title: string;
+  message: string;
+  actionLabel: string;
+  actionTarget: AnnouncementActionTarget;
+  updatedAt: string;
+}
+
+export interface PremiumFeatureFlags {
+  themePalettes: boolean;
+  noteLock: boolean;
+  driveBackup: boolean;
+}
+
+export interface PremiumPricingConfig {
+  monthlyBdt: number;
+  monthlyUsdt: number;
+  yearlyBdt: number;
+  yearlyUsdt: number;
+}
+
+export interface PremiumControlsConfig {
+  features: PremiumFeatureFlags;
+  pricing: PremiumPricingConfig;
+}
+
+export interface AppControlsConfig {
+  freeLimits: FreeLimitsConfig;
+  announcement: AnnouncementBannerConfig;
+  premiumControls: PremiumControlsConfig;
+  updatedAt: string;
+  updatedBy?: string;
+}
+

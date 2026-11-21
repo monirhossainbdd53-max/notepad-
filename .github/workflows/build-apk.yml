@@ -65,7 +65,7 @@ jobs:
             const fs = require("fs");
             const manifestPath = "android/app/src/main/AndroidManifest.xml";
             let xml = fs.readFileSync(manifestPath, "utf8");
-            for (const perm of ["android.permission.CAMERA", "android.permission.RECORD_AUDIO", "android.permission.POST_NOTIFICATIONS"]) {
+            for (const perm of ["android.permission.CAMERA", "android.permission.RECORD_AUDIO", "android.permission.POST_NOTIFICATIONS", "android.permission.USE_BIOMETRIC"]) {
               if (!xml.includes(perm)) {
                 xml = xml.replace("</manifest>", `    <uses-permission android:name="${perm}" />\n</manifest>`);
               }

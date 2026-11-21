@@ -12,7 +12,7 @@ export function AppearanceScreen() {
     setPalette,
     noteFontSize,
     setNoteFontSize,
-    isPremium,
+    canUsePremiumPalettes,
     goBack,
   } = useNotes();
 
@@ -84,7 +84,7 @@ export function AppearanceScreen() {
     },
   ];
 
-  const activePalette = isPremium ? palette : 'default';
+  const activePalette = canUsePremiumPalettes ? palette : 'default';
 
   return (
     <NavigationShell showMobileTabs={false}>
@@ -164,7 +164,7 @@ export function AppearanceScreen() {
           <div className="rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] divide-y divide-[var(--divider)]">
             {paletteOptions.map((item) => {
               const selected = activePalette === item.id;
-              const locked = item.premiumOnly && !isPremium;
+              const locked = item.premiumOnly && !canUsePremiumPalettes;
               return (
                 <button
                   key={item.id}

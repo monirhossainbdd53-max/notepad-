@@ -1,23 +1,59 @@
 import React, { useMemo, useRef, useState, useEffect } from 'react';
 import {
   Archive,
+  ChevronRight,
   FileText,
   Layers,
+  Megaphone,
   MoreHorizontal,
   Pin,
   Plus,
   Search,
   Trash2,
+  X,
 } from 'lucide-react';
 import { NavigationShell } from '../components/NavigationShell';
 import { NoteCard } from '../components/NoteCard';
 import { useNotes } from '../context/NotesContext';
 
+const DISMISSED_BANNER_KEY = 'notes_dismissed_announcement_at';
+
 export function NotesHomeScreen() {
-  const { activeNotes, folders, navigate, getFolderById, createNote } = useNotes();
+  const {
+    activeNotes,
+    folders,
+    navigate,
+    getFolderById,
+    createNote,
+    appControlsConfig,
+  } = useNotes();
   const [selectedFilter, setSelectedFilter] = useState<string>('all');
   const [menuOpen, setMenuOpen] = useState(false);
+  const [dismissedAt, setDismissedAt] = useState<string>(() => {
+    try {
+      return localStorage.getItem(DISMISSED_BANNER_KEY) || '';
+    } catch {
+      return '';
+    }
+  });
   const menuRef = useRef<HTMLDivElement>(null);
+
+  const announcement = appControlsConfig.announcement;
+  const hasBannerText = Boolean(announcement.title || announcement.message);
+  const showAnnouncement =
+    announcement.enabled &&
+    hasBannerText &&
+    (!announcement.updatedAt || dismissedAt !== announcement.updatedAt);
+
+  const handleDismissAnnouncement = () => {
+    const stamp = announcement.updatedAt || 'dismissed';
+    setDismissedAt(stamp);
+    try {
+      localStorage.setItem(DISMISSED_BANNER_KEY, stamp);
+    } catch {
+      // Ignore storage errors
+    }
+  };
 
   useEffect(() => {
     const onOutside = (e: MouseEvent) => {
@@ -167,7 +203,50 @@ export function NotesHomeScreen() {
         </div>
       </header>
 
-      <section className="px-5 sm:px-8 pt-3">
+      <section className="px-5 sm:px-8 pt-3 space-y-3.5">
+        {showAnnouncement && (
+          <div className="rounded-2xl bg-[var(--accent-soft)]/70 border border-[var(--accent-primary)]/30 p-4 flex items-start gap-3">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[var(--accent-primary)] text-white dark:text-[#171717]">
+              <Megaphone className="h-4 w-4" strokeWidth={2.1} />
+            </div>
+
+            <div className="min-w-0 flex-1">
+              {announcement.title && (
+                <p className="text-sm font-semibold text-[var(--text-primary)] leading-snug">
+                  {announcement.title}
+                </p>
+              )}
+              {announcement.message && (
+                <p className="mt-0.5 text-xs text-[var(--text-secondary)] leading-relaxed whitespace-pre-wrap">
+                  {announcement.message}
+                </p>
+              )}
+              {announcement.actionTarget !== 'none' && announcement.actionLabel && (() => {
+                const targetScreen = announcement.actionTarget;
+                return (
+                  <button
+                    type="button"
+                    onClick={() => navigate(targetScreen)}
+                    className="mt-2.5 inline-flex min-h-[32px] items-center gap-1 rounded-xl bg-[var(--text-primary)] dark:bg-[var(--accent-primary)] px-3 text-xs font-semibold text-[var(--bg-card)] dark:text-[#171717] cursor-pointer hover:opacity-90 transition-opacity"
+                  >
+                    <span>{announcement.actionLabel}</span>
+                    <ChevronRight className="h-3.5 w-3.5" strokeWidth={2.2} />
+                  </button>
+                );
+              })()}
+            </div>
+
+            <button
+              type="button"
+              onClick={handleDismissAnnouncement}
+              aria-label="Dismiss announcement"
+              className="min-h-[32px] min-w-[32px] -mr-1 -mt-1 flex items-center justify-center rounded-full text-[var(--text-secondary)] hover:bg-[var(--bg-card)]/60 hover:text-[var(--text-primary)] transition-colors cursor-pointer shrink-0"
+            >
+              <X className="h-4 w-4" strokeWidth={2} />
+            </button>
+          </div>
+        )}
+
         {filteredNotes.length === 0 ? (
           <div className="mt-16 flex flex-col items-center justify-center text-center px-4">
             <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] text-[var(--text-secondary)]">

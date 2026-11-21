@@ -9,6 +9,7 @@ import {
   CloudUpload,
   Crown,
   FileText,
+  Fingerprint,
   HelpCircle,
   Info,
   Loader2,
@@ -33,9 +34,16 @@ export function SettingsScreen() {
     theme,
     palette,
     isPremium,
+    canUsePremiumPalettes,
+    canUseNoteLock,
+    canUseDriveBackup,
     isAdmin,
     notePin,
     setNotePin,
+    biometricLockEnabled,
+    setBiometricLockEnabled,
+    biometricSupported,
+    biometryLabel,
     requestUpgrade,
     folders,
     notes,
@@ -77,7 +85,7 @@ export function SettingsScreen() {
   const themeLabel =
     theme === 'system' ? 'System' : theme === 'dark' ? 'Dark' : 'Light';
   const paletteSuffix =
-    isPremium && palette !== 'default'
+    canUsePremiumPalettes && palette !== 'default'
       ? ` · ${palette.charAt(0).toUpperCase() + palette.slice(1)}`
       : '';
 
@@ -146,7 +154,7 @@ export function SettingsScreen() {
   };
 
   const handleNotePinClick = () => {
-    if (!isPremium) {
+    if (!canUseNoteLock) {
       requestUpgrade('Secure Note Lock with 4-digit PIN is a Notes Premium feature.');
       return;
     }
@@ -245,7 +253,15 @@ export function SettingsScreen() {
                 Note Lock PIN
               </span>
               <span className="flex items-center gap-1.5 text-xs text-[var(--text-secondary)]">
-                <span>{!isPremium ? 'Premium' : notePin ? 'Enabled' : 'Off'}</span>
+                <span>
+                  {!canUseNoteLock
+                    ? 'Premium'
+                    : notePin
+                    ? biometricSupported && biometricLockEnabled
+                      ? `PIN · ${biometryLabel}`
+                      : 'Enabled'
+                    : 'Off'}
+                </span>
                 <ChevronRight className="h-4 w-4" strokeWidth={1.75} />
               </span>
             </button>
@@ -280,7 +296,9 @@ export function SettingsScreen() {
                 Backup & Sync
               </span>
               <span className="flex items-center gap-1.5 text-xs text-[var(--text-secondary)]">
-                <span>{!isGuest ? 'Google Drive' : 'Local'}</span>
+                <span>
+                  {!canUseDriveBackup ? 'Premium' : !isGuest ? 'Google Drive' : 'Local'}
+                </span>
                 <ChevronRight className="h-4 w-4" strokeWidth={1.75} />
               </span>
             </button>
@@ -424,6 +442,38 @@ export function SettingsScreen() {
           <p className="text-sm text-[var(--text-secondary)]">
             Your 4-digit PIN is active for protecting locked notes on this device.
           </p>
+
+          {biometricSupported && (
+            <div className="flex items-center justify-between gap-3 rounded-xl bg-[var(--bg-canvas)] border border-[var(--divider)] px-3.5 py-3">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <Fingerprint className="h-4 w-4 shrink-0 text-[var(--accent-primary)]" strokeWidth={1.9} />
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-[var(--text-primary)] truncate">
+                    {biometryLabel} Unlock
+                  </p>
+                  <p className="text-xs text-[var(--text-secondary)] truncate">
+                    Unlock locked notes without typing PIN
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={biometricLockEnabled}
+                onClick={() => setBiometricLockEnabled(!biometricLockEnabled)}
+                className={`relative h-7 w-12 shrink-0 rounded-full transition-colors cursor-pointer ${
+                  biometricLockEnabled ? 'bg-[var(--accent-primary)]' : 'bg-[var(--divider)]'
+                }`}
+              >
+                <span
+                  className={`absolute top-1 left-1 h-5 w-5 rounded-full bg-white transition-transform ${
+                    biometricLockEnabled ? 'translate-x-5' : 'translate-x-0'
+                  }`}
+                />
+              </button>
+            </div>
+          )}
+
           <button
             type="button"
             onClick={() => {
@@ -537,11 +587,20 @@ export function SettingsScreen() {
                 <button
                   type="button"
                   disabled={driveBusy || exportingFormat === 'pdf'}
-                  onClick={() => setDriveBackupConfirmOpen(true)}
+                  onClick={() => {
+                    if (!canUseDriveBackup) {
+                      setBackupOpen(false);
+                      requestUpgrade('Google Drive cloud backup & restore is a Notes Premium feature.');
+                      return;
+                    }
+                    setDriveBackupConfirmOpen(true);
+                  }}
                   className="flex w-full min-h-[42px] items-center justify-center gap-2 rounded-xl bg-[var(--accent-primary)] px-3 text-xs font-semibold text-white dark:text-[#171717] disabled:opacity-60 cursor-pointer"
                 >
                   {driveBusy || exportingFormat === 'pdf' ? (
                     <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : !canUseDriveBackup ? (
+                    <Lock className="h-3.5 w-3.5" strokeWidth={2} />
                   ) : (
                     <CloudUpload className="h-3.5 w-3.5" strokeWidth={2} />
                   )}
@@ -550,11 +609,20 @@ export function SettingsScreen() {
                 <button
                   type="button"
                   disabled={driveBusy}
-                  onClick={() => setDriveRestoreConfirmOpen(true)}
+                  onClick={() => {
+                    if (!canUseDriveBackup) {
+                      setBackupOpen(false);
+                      requestUpgrade('Google Drive cloud backup & restore is a Notes Premium feature.');
+                      return;
+                    }
+                    setDriveRestoreConfirmOpen(true);
+                  }}
                   className="flex w-full min-h-[42px] items-center justify-center gap-2 rounded-xl border border-[var(--divider)] bg-[var(--bg-card)] px-3 text-xs font-semibold text-[var(--text-primary)] disabled:opacity-60 cursor-pointer"
                 >
                   {driveBusy ? (
                     <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : !canUseDriveBackup ? (
+                    <Lock className="h-3.5 w-3.5 text-[var(--accent-primary)]" strokeWidth={2} />
                   ) : (
                     <CloudDownload className="h-3.5 w-3.5" strokeWidth={2} />
                   )}

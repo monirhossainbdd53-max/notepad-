@@ -3,6 +3,7 @@ import {
   Archive,
   Check,
   ChevronLeft,
+  Fingerprint,
   FolderInput,
   Lock,
   MoreHorizontal,
@@ -16,6 +17,7 @@ import { NavigationShell } from '../components/NavigationShell';
 import { PinDialog } from '../components/PinDialog';
 import { RichTextEditor } from '../components/RichTextEditor';
 import { useNotes } from '../context/NotesContext';
+import { verifyBiometricIdentity } from '../utils/biometricHelper';
 import { extractNoteImages } from '../utils/noteHelpers';
 
 interface NoteEditorScreenProps {
@@ -36,7 +38,10 @@ export function NoteEditorScreen({ mode }: NoteEditorScreenProps) {
     setNotePin,
     unlockedNoteIds,
     unlockNoteSession,
-    isPremium,
+    biometricSupported,
+    biometricLockEnabled,
+    biometryLabel,
+    canUseNoteLock,
     requestUpgrade,
     moveNoteToFolder,
     archiveNote,
@@ -44,6 +49,7 @@ export function NoteEditorScreen({ mode }: NoteEditorScreenProps) {
     goBack,
     navigate,
     permanentlyDeleteNote,
+    showToast,
   } = useNotes();
 
   const note = activeNoteId ? getNoteById(activeNoteId) : undefined;
@@ -57,6 +63,7 @@ export function NoteEditorScreen({ mode }: NoteEditorScreenProps) {
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [pinCreateOpen, setPinCreateOpen] = useState(false);
   const [pinVerifyOpen, setPinVerifyOpen] = useState(false);
+  const [biometricBusy, setBiometricBusy] = useState(false);
 
   const menuRef = useRef<HTMLDivElement>(null);
   const saveTimerRef = useRef<number | null>(null);
@@ -122,6 +129,28 @@ export function NoteEditorScreen({ mode }: NoteEditorScreenProps) {
   }
 
   const requiresPinUnlock = Boolean(note.isLocked && notePin && !unlockedNoteIds.includes(note.id));
+  const canUseBiometricUnlock = biometricSupported && biometricLockEnabled;
+
+  const handleBiometricUnlock = async () => {
+    if (biometricBusy) return;
+    setBiometricBusy(true);
+    try {
+      const res = await verifyBiometricIdentity({
+        title: note.title.trim() || 'Locked Note',
+        subtitle: `Unlock with ${biometryLabel}`,
+      });
+      if (res.verified) {
+        unlockNoteSession(note.id);
+      } else {
+        if (!res.cancelled && res.errorMessage) {
+          showToast(res.errorMessage, 'danger');
+        }
+        setPinVerifyOpen(true);
+      }
+    } finally {
+      setBiometricBusy(false);
+    }
+  };
 
   if (requiresPinUnlock) {
     return (
@@ -145,15 +174,40 @@ export function NoteEditorScreen({ mode }: NoteEditorScreenProps) {
               {note.title.trim() || 'Locked Note'}
             </h1>
             <p className="mt-1.5 text-sm text-[var(--text-secondary)] max-w-xs">
-              Enter your 4-digit PIN to edit this protected note.
+              {canUseBiometricUnlock
+                ? `Use ${biometryLabel.toLowerCase()} or your 4-digit PIN to edit this protected note.`
+                : 'Enter your 4-digit PIN to edit this protected note.'}
             </p>
-            <button
-              type="button"
-              onClick={() => setPinVerifyOpen(true)}
-              className="mt-6 min-h-[46px] rounded-full bg-[var(--text-primary)] dark:bg-[var(--accent-primary)] px-6 text-sm font-semibold text-[var(--bg-card)] dark:text-[#171717] cursor-pointer"
-            >
-              Unlock Note
-            </button>
+            {canUseBiometricUnlock ? (
+              <div className="mt-6 flex flex-col items-center gap-2.5">
+                <button
+                  type="button"
+                  disabled={biometricBusy}
+                  onClick={() => {
+                    void handleBiometricUnlock();
+                  }}
+                  className="inline-flex items-center justify-center gap-2 min-h-[46px] rounded-full bg-[var(--text-primary)] dark:bg-[var(--accent-primary)] px-6 text-sm font-semibold text-[var(--bg-card)] dark:text-[#171717] disabled:opacity-60 cursor-pointer"
+                >
+                  <Fingerprint className="h-4.5 w-4.5" strokeWidth={2} />
+                  Unlock with {biometryLabel}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPinVerifyOpen(true)}
+                  className="min-h-[40px] rounded-full px-4 text-xs font-semibold text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
+                >
+                  Use 4-Digit PIN
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setPinVerifyOpen(true)}
+                className="mt-6 min-h-[46px] rounded-full bg-[var(--text-primary)] dark:bg-[var(--accent-primary)] px-6 text-sm font-semibold text-[var(--bg-card)] dark:text-[#171717] cursor-pointer"
+              >
+                Unlock Note
+              </button>
+            )}
           </div>
           <PinDialog
             open={pinVerifyOpen}
@@ -193,7 +247,7 @@ export function NoteEditorScreen({ mode }: NoteEditorScreenProps) {
 
   const handleToggleLock = () => {
     setMenuOpen(false);
-    if (!isPremium) {
+    if (!canUseNoteLock) {
       requestUpgrade('Secure Note Lock with 4-digit PIN is a Notes Premium feature.');
       return;
     }
@@ -321,7 +375,7 @@ export function NoteEditorScreen({ mode }: NoteEditorScreenProps) {
                       )}
                       {note.isLocked ? 'Remove Lock' : 'Lock Note'}
                     </span>
-                    {!isPremium && (
+                    {!canUseNoteLock && (
                       <Lock className="h-3.5 w-3.5 text-[var(--accent-primary)]" />
                     )}
                   </button>

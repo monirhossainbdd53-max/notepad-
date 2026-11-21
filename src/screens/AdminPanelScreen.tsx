@@ -5,10 +5,13 @@ import {
   CheckCircle2,
   ChevronLeft,
   Clock,
+  Crown,
+  Gauge,
   ImagePlus,
   LayoutDashboard,
   Loader2,
   Mail,
+  Megaphone,
   Menu,
   MessageSquare,
   Plus,
@@ -28,6 +31,7 @@ import {
   SOCIAL_PLATFORM_OPTIONS,
 } from '../services/aboutAppService';
 import { getPreviewDurationMs } from '../services/adminConfigService';
+import { DEFAULT_APP_CONTROLS_CONFIG } from '../services/appControlsService';
 import {
   buildSupportReplyMailto,
   replyToSupportMessage,
@@ -40,6 +44,8 @@ import {
 import {
   AboutSocialLink,
   AboutTeamMember,
+  AnnouncementActionTarget,
+  PremiumFeatureFlags,
   SocialPlatformId,
   SupportMessage,
   TextToolId,
@@ -47,7 +53,15 @@ import {
 } from '../types/notes';
 import { formatFullDate, generateId } from '../utils/noteHelpers';
 
-type AdminModule = 'overview' | 'preview-timer' | 'text-tools' | 'support' | 'about';
+type AdminModule =
+  | 'overview'
+  | 'preview-timer'
+  | 'text-tools'
+  | 'free-limits'
+  | 'announcement'
+  | 'premium-controls'
+  | 'support'
+  | 'about';
 type SupportFilter = 'all' | 'open' | 'replied';
 
 export function AdminPanelScreen() {
@@ -67,6 +81,10 @@ export function AdminPanelScreen() {
     textToolsSyncError,
     textToolsSaving,
     updateAdminTextToolsConfig,
+    appControlsConfig,
+    appControlsSyncError,
+    appControlsSaving,
+    updateAdminAppControlsConfig,
     goBack,
     showToast,
   } = useNotes();
@@ -97,6 +115,54 @@ export function AdminPanelScreen() {
   );
   const [toolsJustSaved, setToolsJustSaved] = useState(false);
 
+  // Free Limits drafts
+  const [maxNotesDraft, setMaxNotesDraft] = useState<string>(
+    String(appControlsConfig.freeLimits.maxActiveNotes)
+  );
+  const [maxFoldersDraft, setMaxFoldersDraft] = useState<string>(
+    String(appControlsConfig.freeLimits.maxFolders)
+  );
+  const [maxImagesDraft, setMaxImagesDraft] = useState<string>(
+    String(appControlsConfig.freeLimits.maxImagesPerNote)
+  );
+  const [limitsJustSaved, setLimitsJustSaved] = useState(false);
+
+  // Announcement Banner drafts
+  const [annEnabled, setAnnEnabled] = useState<boolean>(
+    appControlsConfig.announcement.enabled
+  );
+  const [annTitle, setAnnTitle] = useState<string>(
+    appControlsConfig.announcement.title
+  );
+  const [annMessage, setAnnMessage] = useState<string>(
+    appControlsConfig.announcement.message
+  );
+  const [annActionLabel, setAnnActionLabel] = useState<string>(
+    appControlsConfig.announcement.actionLabel
+  );
+  const [annActionTarget, setAnnActionTarget] = useState<AnnouncementActionTarget>(
+    appControlsConfig.announcement.actionTarget
+  );
+  const [annJustSaved, setAnnJustSaved] = useState(false);
+
+  // Premium Feature & Pricing drafts
+  const [premFeaturesDraft, setPremFeaturesDraft] = useState<PremiumFeatureFlags>(
+    appControlsConfig.premiumControls.features
+  );
+  const [monthlyBdtDraft, setMonthlyBdtDraft] = useState<string>(
+    String(appControlsConfig.premiumControls.pricing.monthlyBdt)
+  );
+  const [monthlyUsdtDraft, setMonthlyUsdtDraft] = useState<string>(
+    String(appControlsConfig.premiumControls.pricing.monthlyUsdt)
+  );
+  const [yearlyBdtDraft, setYearlyBdtDraft] = useState<string>(
+    String(appControlsConfig.premiumControls.pricing.yearlyBdt)
+  );
+  const [yearlyUsdtDraft, setYearlyUsdtDraft] = useState<string>(
+    String(appControlsConfig.premiumControls.pricing.yearlyUsdt)
+  );
+  const [premJustSaved, setPremJustSaved] = useState(false);
+
   useEffect(() => {
     setEnabled(previewConfig.enabled);
     setDays(String(previewConfig.days));
@@ -114,6 +180,22 @@ export function AdminPanelScreen() {
   useEffect(() => {
     setToolsDraft(textToolsConfig.tools);
   }, [textToolsConfig]);
+
+  useEffect(() => {
+    setMaxNotesDraft(String(appControlsConfig.freeLimits.maxActiveNotes));
+    setMaxFoldersDraft(String(appControlsConfig.freeLimits.maxFolders));
+    setMaxImagesDraft(String(appControlsConfig.freeLimits.maxImagesPerNote));
+    setAnnEnabled(appControlsConfig.announcement.enabled);
+    setAnnTitle(appControlsConfig.announcement.title);
+    setAnnMessage(appControlsConfig.announcement.message);
+    setAnnActionLabel(appControlsConfig.announcement.actionLabel);
+    setAnnActionTarget(appControlsConfig.announcement.actionTarget);
+    setPremFeaturesDraft(appControlsConfig.premiumControls.features);
+    setMonthlyBdtDraft(String(appControlsConfig.premiumControls.pricing.monthlyBdt));
+    setMonthlyUsdtDraft(String(appControlsConfig.premiumControls.pricing.monthlyUsdt));
+    setYearlyBdtDraft(String(appControlsConfig.premiumControls.pricing.yearlyBdt));
+    setYearlyUsdtDraft(String(appControlsConfig.premiumControls.pricing.yearlyUsdt));
+  }, [appControlsConfig]);
 
   useEffect(() => {
     if (!isAdmin) return;
@@ -170,6 +252,9 @@ export function AdminPanelScreen() {
     { id: 'overview', label: 'Overview', icon: LayoutDashboard },
     { id: 'preview-timer', label: 'Preview Timer', icon: Clock },
     { id: 'text-tools', label: 'Text Tools', icon: SlidersHorizontal },
+    { id: 'free-limits', label: 'Free Limits', icon: Gauge },
+    { id: 'announcement', label: 'Notice Banner', icon: Megaphone },
+    { id: 'premium-controls', label: 'Plans & Pricing', icon: Crown },
     {
       id: 'support',
       label: 'Support Messages',
@@ -341,11 +426,129 @@ export function AdminPanelScreen() {
     return { free, premium, hidden };
   }, [toolsDraft]);
 
+  const handleSaveFreeLimits = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLimitsJustSaved(false);
+    const parseIntBounded = (raw: string, min: number, max: number, fallback: number) => {
+      const n = Number(raw);
+      if (!Number.isFinite(n)) return fallback;
+      return Math.min(max, Math.max(min, Math.floor(n)));
+    };
+    const ok = await updateAdminAppControlsConfig({
+      freeLimits: {
+        maxActiveNotes: parseIntBounded(
+          maxNotesDraft,
+          1,
+          10000,
+          DEFAULT_APP_CONTROLS_CONFIG.freeLimits.maxActiveNotes
+        ),
+        maxFolders: parseIntBounded(
+          maxFoldersDraft,
+          1,
+          500,
+          DEFAULT_APP_CONTROLS_CONFIG.freeLimits.maxFolders
+        ),
+        maxImagesPerNote: parseIntBounded(
+          maxImagesDraft,
+          0,
+          100,
+          DEFAULT_APP_CONTROLS_CONFIG.freeLimits.maxImagesPerNote
+        ),
+      },
+      announcement: appControlsConfig.announcement,
+      premiumControls: appControlsConfig.premiumControls,
+    });
+    if (ok) {
+      setLimitsJustSaved(true);
+      setTimeout(() => setLimitsJustSaved(false), 4000);
+    }
+  };
+
+  const handleSaveAnnouncement = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAnnJustSaved(false);
+    const ok = await updateAdminAppControlsConfig({
+      freeLimits: appControlsConfig.freeLimits,
+      announcement: {
+        enabled: annEnabled,
+        title: annTitle.trim(),
+        message: annMessage.trim(),
+        actionLabel: annActionLabel.trim(),
+        actionTarget: annActionTarget,
+        updatedAt: new Date().toISOString(),
+      },
+      premiumControls: appControlsConfig.premiumControls,
+    });
+    if (ok) {
+      setAnnJustSaved(true);
+      setTimeout(() => setAnnJustSaved(false), 4000);
+    }
+  };
+
+  const handleSavePremiumControls = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPremJustSaved(false);
+    const parsePrice = (raw: string, min: number, max: number, fallback: number, decimals: number) => {
+      const n = Number(raw);
+      if (!Number.isFinite(n) || n < min) return fallback;
+      const clamped = Math.min(max, n);
+      const factor = Math.pow(10, decimals);
+      return Math.round(clamped * factor) / factor;
+    };
+    const ok = await updateAdminAppControlsConfig({
+      freeLimits: appControlsConfig.freeLimits,
+      announcement: appControlsConfig.announcement,
+      premiumControls: {
+        features: premFeaturesDraft,
+        pricing: {
+          monthlyBdt: parsePrice(
+            monthlyBdtDraft,
+            1,
+            1000000,
+            DEFAULT_APP_CONTROLS_CONFIG.premiumControls.pricing.monthlyBdt,
+            0
+          ),
+          monthlyUsdt: parsePrice(
+            monthlyUsdtDraft,
+            0.1,
+            100000,
+            DEFAULT_APP_CONTROLS_CONFIG.premiumControls.pricing.monthlyUsdt,
+            2
+          ),
+          yearlyBdt: parsePrice(
+            yearlyBdtDraft,
+            1,
+            10000000,
+            DEFAULT_APP_CONTROLS_CONFIG.premiumControls.pricing.yearlyBdt,
+            0
+          ),
+          yearlyUsdt: parsePrice(
+            yearlyUsdtDraft,
+            0.1,
+            1000000,
+            DEFAULT_APP_CONTROLS_CONFIG.premiumControls.pricing.yearlyUsdt,
+            2
+          ),
+        },
+      },
+    });
+    if (ok) {
+      setPremJustSaved(true);
+      setTimeout(() => setPremJustSaved(false), 4000);
+    }
+  };
+
   const headerTitle =
     activeModule === 'overview'
       ? 'Overview'
       : activeModule === 'text-tools'
       ? 'Text Tools'
+      : activeModule === 'free-limits'
+      ? 'Free Limits'
+      : activeModule === 'announcement'
+      ? 'Notice Banner'
+      : activeModule === 'premium-controls'
+      ? 'Plans & Pricing'
       : activeModule === 'support'
       ? 'Support Messages'
       : activeModule === 'about'
@@ -547,6 +750,65 @@ export function AdminPanelScreen() {
                 </button>
               </div>
 
+              <div className="rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] p-5 flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-xs font-medium text-[var(--text-secondary)]">
+                    Free Plan Limits
+                  </p>
+                  <p className="mt-1 text-lg font-bold tabular-nums">
+                    {appControlsConfig.freeLimits.maxActiveNotes} notes ·{' '}
+                    {appControlsConfig.freeLimits.maxFolders} folders ·{' '}
+                    {appControlsConfig.freeLimits.maxImagesPerNote} img
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setActiveModule('free-limits')}
+                  className="min-h-[40px] rounded-xl bg-[var(--bg-subtle)] px-4 text-xs font-semibold text-[var(--text-primary)] cursor-pointer"
+                >
+                  Edit
+                </button>
+              </div>
+
+              <div className="rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] p-5 flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-xs font-medium text-[var(--text-secondary)]">
+                    Notice Banner
+                  </p>
+                  <p className="mt-1 text-lg font-bold truncate">
+                    {appControlsConfig.announcement.enabled
+                      ? appControlsConfig.announcement.title || 'Active'
+                      : 'Hidden'}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setActiveModule('announcement')}
+                  className="min-h-[40px] shrink-0 rounded-xl bg-[var(--bg-subtle)] px-4 text-xs font-semibold text-[var(--text-primary)] cursor-pointer"
+                >
+                  Configure
+                </button>
+              </div>
+
+              <div className="rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] p-5 flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-xs font-medium text-[var(--text-secondary)]">
+                    Plans & Pricing
+                  </p>
+                  <p className="mt-1 text-lg font-bold tabular-nums">
+                    ৳{appControlsConfig.premiumControls.pricing.monthlyBdt}/mo · ৳
+                    {appControlsConfig.premiumControls.pricing.yearlyBdt}/yr
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setActiveModule('premium-controls')}
+                  className="min-h-[40px] rounded-xl bg-[var(--bg-subtle)] px-4 text-xs font-semibold text-[var(--text-primary)] cursor-pointer"
+                >
+                  Manage
+                </button>
+              </div>
+
               <button
                 type="button"
                 onClick={() => setActiveModule('preview-timer')}
@@ -555,6 +817,372 @@ export function AdminPanelScreen() {
                 Configure Preview Timer
               </button>
             </div>
+          ) : activeModule === 'free-limits' ? (
+            <form onSubmit={handleSaveFreeLimits} className="space-y-5">
+              <div className="rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] p-5 space-y-4">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-sm font-semibold">Free Plan Limits</p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMaxNotesDraft(String(DEFAULT_APP_CONTROLS_CONFIG.freeLimits.maxActiveNotes));
+                      setMaxFoldersDraft(String(DEFAULT_APP_CONTROLS_CONFIG.freeLimits.maxFolders));
+                      setMaxImagesDraft(String(DEFAULT_APP_CONTROLS_CONFIG.freeLimits.maxImagesPerNote));
+                    }}
+                    className="inline-flex min-h-[36px] items-center gap-1.5 rounded-xl bg-[var(--bg-subtle)] px-3 text-xs font-semibold text-[var(--text-primary)] hover:opacity-85 cursor-pointer"
+                  >
+                    <RotateCcw className="h-3.5 w-3.5" strokeWidth={2} />
+                    Reset Defaults
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <input
+                    type="number"
+                    min={1}
+                    max={10000}
+                    inputMode="numeric"
+                    value={maxNotesDraft}
+                    onChange={(e) => setMaxNotesDraft(e.target.value)}
+                    placeholder="Max notes (25)"
+                    aria-label="Max active notes for Free users"
+                    className="w-full min-h-[46px] rounded-xl bg-[var(--bg-canvas)] border border-[var(--divider)] px-3.5 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-primary)] tabular-nums"
+                  />
+                  <input
+                    type="number"
+                    min={1}
+                    max={500}
+                    inputMode="numeric"
+                    value={maxFoldersDraft}
+                    onChange={(e) => setMaxFoldersDraft(e.target.value)}
+                    placeholder="Max folders (4)"
+                    aria-label="Max folders for Free users"
+                    className="w-full min-h-[46px] rounded-xl bg-[var(--bg-canvas)] border border-[var(--divider)] px-3.5 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-primary)] tabular-nums"
+                  />
+                  <input
+                    type="number"
+                    min={0}
+                    max={100}
+                    inputMode="numeric"
+                    value={maxImagesDraft}
+                    onChange={(e) => setMaxImagesDraft(e.target.value)}
+                    placeholder="Max images (1)"
+                    aria-label="Max images per note for Free users"
+                    className="w-full min-h-[46px] rounded-xl bg-[var(--bg-canvas)] border border-[var(--divider)] px-3.5 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-primary)] tabular-nums"
+                  />
+                </div>
+              </div>
+
+              {appControlsSyncError && (
+                <div className="rounded-2xl bg-[#E45B5B]/10 border border-[#E45B5B]/30 p-4 text-xs text-[#E45B5B]">
+                  {appControlsSyncError}
+                </div>
+              )}
+
+              {limitsJustSaved && !appControlsSyncError && (
+                <div className="flex items-center gap-2 rounded-2xl bg-[#2E7D32]/12 border border-[#2E7D32]/30 p-3.5 text-xs font-semibold text-[#2E7D32] dark:text-[#81C995]">
+                  <CheckCircle2 className="h-4 w-4 shrink-0" />
+                  Saved — Free plan limits updated in real time
+                </div>
+              )}
+
+              <button
+                type="submit"
+                disabled={appControlsSaving}
+                className="flex w-full min-h-[48px] items-center justify-center gap-2 rounded-xl bg-[var(--text-primary)] dark:bg-[var(--accent-primary)] text-sm font-semibold text-[var(--bg-card)] dark:text-[#171717] disabled:opacity-60 transition-opacity hover:opacity-90 cursor-pointer"
+              >
+                {appControlsSaving ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Saving...
+                  </>
+                ) : limitsJustSaved ? (
+                  <>
+                    <CheckCircle2 className="h-4 w-4" />
+                    Saved
+                  </>
+                ) : (
+                  'Save Free Limits'
+                )}
+              </button>
+            </form>
+          ) : activeModule === 'announcement' ? (
+            <form onSubmit={handleSaveAnnouncement} className="space-y-5">
+              <div className="rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] p-5 flex items-center justify-between gap-4">
+                <p className="text-sm font-semibold">Show Home Notice Banner</p>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={annEnabled}
+                  aria-label="Toggle home announcement banner"
+                  onClick={() => setAnnEnabled((prev) => !prev)}
+                  className={`relative h-7 w-12 shrink-0 rounded-full transition-colors cursor-pointer ${
+                    annEnabled ? 'bg-[var(--accent-primary)]' : 'bg-[var(--divider)]'
+                  }`}
+                >
+                  <span
+                    className={`absolute top-1 left-1 h-5 w-5 rounded-full bg-white transition-transform ${
+                      annEnabled ? 'translate-x-5' : 'translate-x-0'
+                    }`}
+                  />
+                </button>
+              </div>
+
+              <div className="rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] p-5 space-y-3">
+                <p className="text-sm font-semibold">Banner Content</p>
+
+                <input
+                  type="text"
+                  maxLength={120}
+                  value={annTitle}
+                  onChange={(e) => setAnnTitle(e.target.value)}
+                  placeholder="Notice title"
+                  aria-label="Notice title"
+                  className="w-full min-h-[46px] rounded-xl bg-[var(--bg-canvas)] border border-[var(--divider)] px-3.5 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-primary)]"
+                />
+
+                <textarea
+                  rows={3}
+                  maxLength={400}
+                  value={annMessage}
+                  onChange={(e) => setAnnMessage(e.target.value)}
+                  placeholder="Write announcement or offer message..."
+                  aria-label="Notice message"
+                  className="w-full rounded-xl bg-[var(--bg-canvas)] border border-[var(--divider)] p-3.5 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-primary)] resize-none"
+                />
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <input
+                    type="text"
+                    maxLength={32}
+                    value={annActionLabel}
+                    onChange={(e) => setAnnActionLabel(e.target.value)}
+                    placeholder="Button text (optional)"
+                    aria-label="Action button text"
+                    className="w-full min-h-[44px] rounded-xl bg-[var(--bg-canvas)] border border-[var(--divider)] px-3.5 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-primary)]"
+                  />
+
+                  <select
+                    value={annActionTarget}
+                    onChange={(e) =>
+                      setAnnActionTarget(e.target.value as AnnouncementActionTarget)
+                    }
+                    aria-label="Button action target"
+                    className="w-full min-h-[44px] rounded-xl bg-[var(--bg-canvas)] border border-[var(--divider)] px-3.5 text-sm text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent-primary)]"
+                  >
+                    <option value="none">No action button</option>
+                    <option value="premium">Open Premium</option>
+                    <option value="about">Open About App</option>
+                    <option value="help">Open Help & Support</option>
+                  </select>
+                </div>
+              </div>
+
+              {appControlsSyncError && (
+                <div className="rounded-2xl bg-[#E45B5B]/10 border border-[#E45B5B]/30 p-4 text-xs text-[#E45B5B]">
+                  {appControlsSyncError}
+                </div>
+              )}
+
+              {annJustSaved && !appControlsSyncError && (
+                <div className="flex items-center gap-2 rounded-2xl bg-[#2E7D32]/12 border border-[#2E7D32]/30 p-3.5 text-xs font-semibold text-[#2E7D32] dark:text-[#81C995]">
+                  <CheckCircle2 className="h-4 w-4 shrink-0" />
+                  Saved — Notice banner synced to all users
+                </div>
+              )}
+
+              <button
+                type="submit"
+                disabled={appControlsSaving}
+                className="flex w-full min-h-[48px] items-center justify-center gap-2 rounded-xl bg-[var(--text-primary)] dark:bg-[var(--accent-primary)] text-sm font-semibold text-[var(--bg-card)] dark:text-[#171717] disabled:opacity-60 transition-opacity hover:opacity-90 cursor-pointer"
+              >
+                {appControlsSaving ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Saving...
+                  </>
+                ) : annJustSaved ? (
+                  <>
+                    <CheckCircle2 className="h-4 w-4" />
+                    Saved
+                  </>
+                ) : (
+                  'Save Notice Banner'
+                )}
+              </button>
+            </form>
+          ) : activeModule === 'premium-controls' ? (
+            <form onSubmit={handleSavePremiumControls} className="space-y-5">
+              <div className="rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] p-5 space-y-4">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-sm font-semibold">Feature Access</p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPremFeaturesDraft(
+                        DEFAULT_APP_CONTROLS_CONFIG.premiumControls.features
+                      );
+                      setMonthlyBdtDraft(
+                        String(DEFAULT_APP_CONTROLS_CONFIG.premiumControls.pricing.monthlyBdt)
+                      );
+                      setMonthlyUsdtDraft(
+                        String(DEFAULT_APP_CONTROLS_CONFIG.premiumControls.pricing.monthlyUsdt)
+                      );
+                      setYearlyBdtDraft(
+                        String(DEFAULT_APP_CONTROLS_CONFIG.premiumControls.pricing.yearlyBdt)
+                      );
+                      setYearlyUsdtDraft(
+                        String(DEFAULT_APP_CONTROLS_CONFIG.premiumControls.pricing.yearlyUsdt)
+                      );
+                    }}
+                    className="inline-flex min-h-[36px] items-center gap-1.5 rounded-xl bg-[var(--bg-subtle)] px-3 text-xs font-semibold text-[var(--text-primary)] hover:opacity-85 cursor-pointer"
+                  >
+                    <RotateCcw className="h-3.5 w-3.5" strokeWidth={2} />
+                    Reset Defaults
+                  </button>
+                </div>
+
+                <div className="divide-y divide-[var(--divider)]">
+                  {(
+                    [
+                      { key: 'themePalettes', title: 'Theme Palettes', desc: 'Sepia, Sage & Slate' },
+                      { key: 'noteLock', title: 'Note Lock PIN', desc: '4-digit private note lock' },
+                      { key: 'driveBackup', title: 'Google Drive Backup', desc: 'Cloud backup & restore' },
+                    ] as const
+                  ).map((feat) => {
+                    const isPrem = premFeaturesDraft[feat.key];
+                    return (
+                      <div
+                        key={feat.key}
+                        className="py-3 first:pt-1 last:pb-1 flex items-center justify-between gap-3"
+                      >
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium text-[var(--text-primary)]">
+                            {feat.title}
+                          </p>
+                          <p className="text-[11px] text-[var(--text-secondary)] mt-0.5">
+                            {feat.desc}
+                          </p>
+                        </div>
+
+                        <div className="flex items-center rounded-xl bg-[var(--bg-canvas)] border border-[var(--divider)] p-0.5 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setPremFeaturesDraft((prev) => ({ ...prev, [feat.key]: false }))
+                            }
+                            className={`min-h-[32px] rounded-lg px-3 text-xs font-semibold transition-colors cursor-pointer ${
+                              !isPrem
+                                ? 'bg-[var(--text-primary)] dark:bg-[var(--accent-primary)] text-[var(--bg-card)] dark:text-[#171717]'
+                                : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+                            }`}
+                          >
+                            Free
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setPremFeaturesDraft((prev) => ({ ...prev, [feat.key]: true }))
+                            }
+                            className={`min-h-[32px] rounded-lg px-3 text-xs font-semibold transition-colors cursor-pointer ${
+                              isPrem
+                                ? 'bg-[var(--accent-primary)] text-white dark:text-[#171717]'
+                                : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+                            }`}
+                          >
+                            Premium
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] p-5 space-y-4">
+                <p className="text-sm font-semibold">Subscription Pricing</p>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <input
+                    type="number"
+                    min={1}
+                    step={1}
+                    inputMode="numeric"
+                    value={monthlyBdtDraft}
+                    onChange={(e) => setMonthlyBdtDraft(e.target.value)}
+                    placeholder="Monthly BDT (590)"
+                    aria-label="Monthly BDT price"
+                    className="w-full min-h-[46px] rounded-xl bg-[var(--bg-canvas)] border border-[var(--divider)] px-3.5 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-primary)] tabular-nums"
+                  />
+                  <input
+                    type="number"
+                    min={0.1}
+                    step="0.01"
+                    inputMode="decimal"
+                    value={monthlyUsdtDraft}
+                    onChange={(e) => setMonthlyUsdtDraft(e.target.value)}
+                    placeholder="Monthly USDT (4.99)"
+                    aria-label="Monthly USDT price"
+                    className="w-full min-h-[46px] rounded-xl bg-[var(--bg-canvas)] border border-[var(--divider)] px-3.5 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-primary)] tabular-nums"
+                  />
+                  <input
+                    type="number"
+                    min={1}
+                    step={1}
+                    inputMode="numeric"
+                    value={yearlyBdtDraft}
+                    onChange={(e) => setYearlyBdtDraft(e.target.value)}
+                    placeholder="Yearly BDT (4790)"
+                    aria-label="Yearly BDT price"
+                    className="w-full min-h-[46px] rounded-xl bg-[var(--bg-canvas)] border border-[var(--divider)] px-3.5 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-primary)] tabular-nums"
+                  />
+                  <input
+                    type="number"
+                    min={0.1}
+                    step="0.01"
+                    inputMode="decimal"
+                    value={yearlyUsdtDraft}
+                    onChange={(e) => setYearlyUsdtDraft(e.target.value)}
+                    placeholder="Yearly USDT (39.99)"
+                    aria-label="Yearly USDT price"
+                    className="w-full min-h-[46px] rounded-xl bg-[var(--bg-canvas)] border border-[var(--divider)] px-3.5 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-primary)] tabular-nums"
+                  />
+                </div>
+              </div>
+
+              {appControlsSyncError && (
+                <div className="rounded-2xl bg-[#E45B5B]/10 border border-[#E45B5B]/30 p-4 text-xs text-[#E45B5B]">
+                  {appControlsSyncError}
+                </div>
+              )}
+
+              {premJustSaved && !appControlsSyncError && (
+                <div className="flex items-center gap-2 rounded-2xl bg-[#2E7D32]/12 border border-[#2E7D32]/30 p-3.5 text-xs font-semibold text-[#2E7D32] dark:text-[#81C995]">
+                  <CheckCircle2 className="h-4 w-4 shrink-0" />
+                  Saved — Plans & pricing updated in real time
+                </div>
+              )}
+
+              <button
+                type="submit"
+                disabled={appControlsSaving}
+                className="flex w-full min-h-[48px] items-center justify-center gap-2 rounded-xl bg-[var(--text-primary)] dark:bg-[var(--accent-primary)] text-sm font-semibold text-[var(--bg-card)] dark:text-[#171717] disabled:opacity-60 transition-opacity hover:opacity-90 cursor-pointer"
+              >
+                {appControlsSaving ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Saving...
+                  </>
+                ) : premJustSaved ? (
+                  <>
+                    <CheckCircle2 className="h-4 w-4" />
+                    Saved
+                  </>
+                ) : (
+                  'Save Plans & Pricing'
+                )}
+              </button>
+            </form>
           ) : activeModule === 'text-tools' ? (
             <form onSubmit={handleSaveTextTools} className="space-y-5">
               <div className="rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] p-5 space-y-4">

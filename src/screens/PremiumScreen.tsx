@@ -24,40 +24,6 @@ import {
   startBinancePayCheckout,
   startSslCommerzCheckout,
 } from '../services/billingService';
-import { FREE_LIMITS } from '../types/notes';
-
-const PREMIUM_FEATURES = [
-  {
-    icon: FileText,
-    title: 'Unlimited notes',
-    detail: `No ${FREE_LIMITS.maxActiveNotes}-note cap from the Free plan`,
-  },
-  {
-    icon: FolderOpen,
-    title: 'Unlimited folders',
-    detail: `Organize beyond ${FREE_LIMITS.maxFolders} folders`,
-  },
-  {
-    icon: Sparkles,
-    title: 'Rich formatting & unlimited photos',
-    detail: `Headings, quotes, checklists & more than ${FREE_LIMITS.maxImagesPerNote} photo per note`,
-  },
-  {
-    icon: Palette,
-    title: 'Premium themes',
-    detail: 'Sepia, Sage, and Slate color palettes',
-  },
-  {
-    icon: Lock,
-    title: '4-digit PIN note lock',
-    detail: 'Hide previews and lock private notes',
-  },
-  {
-    icon: Cloud,
-    title: 'Cloud backup & restore',
-    detail: 'Google Drive backup alongside JSON export',
-  },
-];
 
 export function PremiumScreen() {
   const {
@@ -66,6 +32,7 @@ export function PremiumScreen() {
     setIsPremium,
     hasPaidSubscription,
     isPreviewAvailable,
+    appControlsConfig,
     activeNotes,
     folders,
     authLoading,
@@ -91,14 +58,74 @@ export function PremiumScreen() {
     void fetchBillingConfig().then(setBillingConfig);
   }, []);
 
+  const { freeLimits, premiumControls } = appControlsConfig;
+  const { features: premFeatures, pricing } = premiumControls;
+
+  const premiumFeaturesList = [
+    {
+      icon: FileText,
+      title: 'Unlimited notes',
+      detail: `No ${freeLimits.maxActiveNotes}-note cap from the Free plan`,
+    },
+    {
+      icon: FolderOpen,
+      title: 'Unlimited folders',
+      detail: `Organize beyond ${freeLimits.maxFolders} folders`,
+    },
+    {
+      icon: Sparkles,
+      title: 'Rich formatting & unlimited photos',
+      detail:
+        freeLimits.maxImagesPerNote <= 0
+          ? 'Headings, quotes, checklists & unlimited photos per note'
+          : `Headings, quotes, checklists & more than ${freeLimits.maxImagesPerNote} ${freeLimits.maxImagesPerNote === 1 ? 'photo' : 'photos'} per note`,
+    },
+    ...(premFeatures.themePalettes
+      ? [
+          {
+            icon: Palette,
+            title: 'Premium themes',
+            detail: 'Sepia, Sage, and Slate color palettes',
+          },
+        ]
+      : []),
+    ...(premFeatures.noteLock
+      ? [
+          {
+            icon: Lock,
+            title: '4-digit PIN note lock',
+            detail: 'Hide previews and lock private notes',
+          },
+        ]
+      : []),
+    ...(premFeatures.driveBackup
+      ? [
+          {
+            icon: Cloud,
+            title: 'Cloud backup & restore',
+            detail: 'Google Drive backup alongside ZIP export',
+          },
+        ]
+      : []),
+  ];
+
+  const monthlyBdtFormatted = Math.round(pricing.monthlyBdt).toLocaleString();
+  const yearlyBdtFormatted = Math.round(pricing.yearlyBdt).toLocaleString();
+  const monthlyUsdtFormatted = pricing.monthlyUsdt.toFixed(2);
+  const yearlyUsdtFormatted = pricing.yearlyUsdt.toFixed(2);
+
+  const annualizedBdt = pricing.monthlyBdt * 12;
+  const yearlySavePercent =
+    annualizedBdt > 0 && pricing.yearlyBdt < annualizedBdt
+      ? Math.round(((annualizedBdt - pricing.yearlyBdt) / annualizedBdt) * 100)
+      : 0;
+
   const bdtPrice =
     plan === 'yearly'
-      ? billingConfig?.plans.yearly.bdt || '4790.00'
-      : billingConfig?.plans.monthly.bdt || '590.00';
+      ? pricing.yearlyBdt.toFixed(2)
+      : pricing.monthlyBdt.toFixed(2);
   const usdtPrice =
-    plan === 'yearly'
-      ? billingConfig?.plans.yearly.usdt || '39.99'
-      : billingConfig?.plans.monthly.usdt || '4.99';
+    plan === 'yearly' ? yearlyUsdtFormatted : monthlyUsdtFormatted;
 
   const handlePay = async (provider: 'sslcommerz' | 'binance_pay') => {
     const email = (account.email || receiptEmail).trim();
@@ -165,7 +192,7 @@ export function PremiumScreen() {
 
         {/* Scannable Feature List */}
         <div className="rounded-3xl bg-[var(--bg-card)] border border-[var(--divider)] divide-y divide-[var(--divider)]">
-          {PREMIUM_FEATURES.map((item) => {
+          {premiumFeaturesList.map((item) => {
             const Icon = item.icon;
             return (
               <div key={item.title} className="flex items-center gap-3.5 px-5 py-4">
@@ -200,7 +227,7 @@ export function PremiumScreen() {
             >
               <div className="flex items-center justify-between">
                 <span className="text-xs font-semibold text-[var(--accent-primary)]">
-                  Save 33%
+                  {yearlySavePercent > 0 ? `Save ${yearlySavePercent}%` : 'Annual'}
                 </span>
                 <span
                   className={`h-4 w-4 rounded-full border flex items-center justify-center ${
@@ -214,11 +241,11 @@ export function PremiumScreen() {
               </div>
               <p className="mt-2 text-sm font-semibold text-[var(--text-primary)]">Yearly</p>
               <p className="mt-0.5 text-xl font-bold text-[var(--text-primary)] tabular-nums">
-                ৳4,790
+                ৳{yearlyBdtFormatted}
                 <span className="text-xs font-normal text-[var(--text-secondary)]"> / yr</span>
               </p>
               <p className="mt-0.5 text-[11px] text-[var(--text-secondary)] tabular-nums">
-                or $39.99 USDT
+                or ${yearlyUsdtFormatted} USDT
               </p>
             </button>
 
@@ -247,11 +274,11 @@ export function PremiumScreen() {
               </div>
               <p className="mt-2 text-sm font-semibold text-[var(--text-primary)]">Monthly</p>
               <p className="mt-0.5 text-xl font-bold text-[var(--text-primary)] tabular-nums">
-                ৳590
+                ৳{monthlyBdtFormatted}
                 <span className="text-xs font-normal text-[var(--text-secondary)]"> / mo</span>
               </p>
               <p className="mt-0.5 text-[11px] text-[var(--text-secondary)] tabular-nums">
-                or $4.99 USDT
+                or ${monthlyUsdtFormatted} USDT
               </p>
             </button>
           </div>
@@ -263,7 +290,11 @@ export function PremiumScreen() {
           >
             {isPremium
               ? 'Notes Premium Active'
-              : `Continue with ${plan === 'yearly' ? 'Yearly (৳4,790 / $39.99)' : 'Monthly (৳590 / $4.99)'}`}
+              : `Continue with ${
+                  plan === 'yearly'
+                    ? `Yearly (৳${yearlyBdtFormatted} / $${yearlyUsdtFormatted})`
+                    : `Monthly (৳${monthlyBdtFormatted} / $${monthlyUsdtFormatted})`
+                }`}
           </button>
 
           <button
@@ -293,7 +324,7 @@ export function PremiumScreen() {
               <p className="text-xs text-[var(--text-secondary)] tabular-nums truncate">
                 {isPremium
                   ? 'All Premium features unlocked'
-                  : `${activeNotes.length}/${FREE_LIMITS.maxActiveNotes} notes · ${folders.length}/${FREE_LIMITS.maxFolders} folders used`}
+                  : `${activeNotes.length}/${freeLimits.maxActiveNotes} notes · ${folders.length}/${freeLimits.maxFolders} folders used`}
               </p>
             </div>
 

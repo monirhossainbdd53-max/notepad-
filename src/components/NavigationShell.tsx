@@ -13,7 +13,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { useNotes } from '../context/NotesContext';
-import { FREE_LIMITS, ScreenName } from '../types/notes';
+import { ScreenName } from '../types/notes';
 
 interface NavigationShellProps {
   children: React.ReactNode;
@@ -41,6 +41,7 @@ export function NavigationShell({
     folders,
     createNote,
     isPremium,
+    appControlsConfig,
   } = useNotes();
 
   const handleNewNote = () => {
@@ -190,7 +191,7 @@ export function NavigationShell({
             </span>
             {!isPremium && (
               <span className="text-[11px] text-[var(--text-secondary)] tabular-nums">
-                {activeNotes.length}/{FREE_LIMITS.maxActiveNotes}
+                {activeNotes.length}/{appControlsConfig.freeLimits.maxActiveNotes}
               </span>
             )}
           </button>

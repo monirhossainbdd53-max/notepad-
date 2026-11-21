@@ -12,8 +12,8 @@ import {
 } from '../data/initialData';
 import {
   AboutAppConfig,
+  AppControlsConfig,
   AutoBackupSchedule,
-  FREE_LIMITS,
   Folder,
   Note,
   NoteFontSize,
@@ -39,6 +39,10 @@ import {
 } from '../services/googleAuthDrive';
 import { syncLocalNotifications } from '../utils/notificationHelper';
 import {
+  checkBiometricAvailability,
+  subscribeBiometryChange,
+} from '../utils/biometricHelper';
+import {
   restorePurchaseOnServer,
   verifyPurchaseTransaction,
 } from '../services/billingService';
@@ -62,6 +66,12 @@ import {
   saveTextToolsConfig,
   subscribeTextToolsConfig,
 } from '../services/textToolsService';
+import {
+  DEFAULT_APP_CONTROLS_CONFIG,
+  loadCachedAppControlsConfig,
+  saveAppControlsConfig,
+  subscribeAppControlsConfig,
+} from '../services/appControlsService';
 
 const STORAGE_KEY = 'notes_app_state_v2';
 
@@ -73,6 +83,7 @@ interface PersistedState {
   noteFontSize: NoteFontSize;
   isPremium: boolean;
   notePin: string | null;
+  biometricLockEnabled: boolean;
   defaultFolderId: string;
   notifications: NotificationSettings;
   account: UserAccount;
@@ -150,6 +161,16 @@ interface NotesContextValue {
   updateAdminTextToolsConfig: (
     nextTools: Record<TextToolId, TextToolRule>
   ) => Promise<boolean>;
+  appControlsConfig: AppControlsConfig;
+  appControlsSyncState: FirestoreSyncState;
+  appControlsSyncError: string | null;
+  appControlsSaving: boolean;
+  updateAdminAppControlsConfig: (
+    next: Pick<AppControlsConfig, 'freeLimits' | 'announcement' | 'premiumControls'>
+  ) => Promise<boolean>;
+  canUsePremiumPalettes: boolean;
+  canUseNoteLock: boolean;
+  canUseDriveBackup: boolean;
   canCreateNote: boolean;
   canCreateFolder: boolean;
   maxImagesAllowed: number;
@@ -158,6 +179,10 @@ interface NotesContextValue {
   dismissUpgradePrompt: () => void;
   notePin: string | null;
   setNotePin: (pin: string | null) => void;
+  biometricLockEnabled: boolean;
+  setBiometricLockEnabled: (enabled: boolean) => void;
+  biometricSupported: boolean;
+  biometryLabel: string;
   unlockedNoteIds: string[];
   unlockNoteSession: (noteId: string) => void;
   lockNoteSession: (noteId: string) => void;
@@ -217,6 +242,7 @@ const defaultPersistedState: PersistedState = {
   noteFontSize: 'medium',
   isPremium: false,
   notePin: null,
+  biometricLockEnabled: true,
   defaultFolderId: '',
   notifications: {
     dailyReminder: false,
@@ -290,6 +316,8 @@ function loadInitialState(): PersistedState {
           : 'medium',
       isPremium: Boolean(parsed.isPremium),
       notePin: typeof parsed.notePin === 'string' ? parsed.notePin : null,
+      biometricLockEnabled:
+        typeof parsed.biometricLockEnabled === 'boolean' ? parsed.biometricLockEnabled : true,
       defaultFolderId: typeof parsed.defaultFolderId === 'string' ? parsed.defaultFolderId : '',
       notifications: {
         ...defaultPersistedState.notifications,
@@ -357,6 +385,11 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   const [noteFontSize, setNoteFontSizeState] = useState<NoteFontSize>(initial.noteFontSize);
   const [isPremium, setIsPremiumState] = useState<boolean>(initial.isPremium);
   const [notePin, setNotePinState] = useState<string | null>(initial.notePin);
+  const [biometricLockEnabled, setBiometricLockEnabledState] = useState<boolean>(
+    initial.biometricLockEnabled
+  );
+  const [biometricSupported, setBiometricSupported] = useState<boolean>(false);
+  const [biometryLabel, setBiometryLabel] = useState<string>('Fingerprint');
   const [unlockedNoteIds, setUnlockedNoteIds] = useState<string[]>([]);
   const [upgradePromptReason, setUpgradePromptReason] = useState<string | null>(null);
 
@@ -386,6 +419,12 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   const [textToolsSyncState, setTextToolsSyncState] = useState<FirestoreSyncState>('loading');
   const [textToolsSyncError, setTextToolsSyncError] = useState<string | null>(null);
   const [textToolsSaving, setTextToolsSaving] = useState(false);
+  const [appControlsConfig, setAppControlsConfig] = useState<AppControlsConfig>(() =>
+    loadCachedAppControlsConfig()
+  );
+  const [appControlsSyncState, setAppControlsSyncState] = useState<FirestoreSyncState>('loading');
+  const [appControlsSyncError, setAppControlsSyncError] = useState<string | null>(null);
+  const [appControlsSaving, setAppControlsSaving] = useState(false);
   const [nowMs, setNowMs] = useState<number>(() => Date.now());
   const [adminSaving, setAdminSaving] = useState(false);
   const [authLoading, setAuthLoading] = useState(false);
@@ -426,6 +465,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         noteFontSize,
         isPremium,
         notePin,
+        biometricLockEnabled,
         defaultFolderId,
         notifications,
         account,
@@ -447,6 +487,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     noteFontSize,
     isPremium,
     notePin,
+    biometricLockEnabled,
     defaultFolderId,
     notifications,
     account,
@@ -476,16 +517,23 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     }
   }, [resolvedTheme]);
 
-  // Sync active palette to <html>; if user downgrades to Free, revert visual palette to default cleanly
+  const canUsePremiumPalettes =
+    isPremium || !appControlsConfig.premiumControls.features.themePalettes;
+  const canUseNoteLock =
+    isPremium || !appControlsConfig.premiumControls.features.noteLock;
+  const canUseDriveBackup =
+    isPremium || !appControlsConfig.premiumControls.features.driveBackup;
+
+  // Sync active palette to <html>; if user downgrades to Free and themes require Premium, revert visual palette to default cleanly
   useEffect(() => {
     const root = document.documentElement;
-    const activePalette = isPremium ? palette : 'default';
+    const activePalette = canUsePremiumPalettes ? palette : 'default';
     if (activePalette === 'default') {
       root.removeAttribute('data-palette');
     } else {
       root.setAttribute('data-palette', activePalette);
     }
-  }, [isPremium, palette]);
+  }, [canUsePremiumPalettes, palette]);
 
   useEffect(() => {
     document.documentElement.setAttribute('data-note-size', noteFontSize);
@@ -531,8 +579,45 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
+    const unsubscribe = subscribeAppControlsConfig((config, syncState, errMsg) => {
+      setAppControlsConfig(config || DEFAULT_APP_CONTROLS_CONFIG);
+      setAppControlsSyncState(syncState);
+      setAppControlsSyncError(errMsg || null);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  useEffect(() => {
     void syncLocalNotifications(initial.notifications, false);
   }, [initial.notifications]);
+
+  useEffect(() => {
+    let active = true;
+    let cleanupListener: (() => void) | null = null;
+
+    void checkBiometricAvailability().then((status) => {
+      if (!active) return;
+      setBiometricSupported(status.available);
+      setBiometryLabel(status.label);
+    });
+
+    void subscribeBiometryChange((status) => {
+      if (!active) return;
+      setBiometricSupported(status.available);
+      setBiometryLabel(status.label);
+    }).then((unsub) => {
+      if (!active) {
+        unsub?.();
+      } else {
+        cleanupListener = unsub;
+      }
+    });
+
+    return () => {
+      active = false;
+      cleanupListener?.();
+    };
+  }, []);
 
   useEffect(() => {
     const unsubscribe = subscribePreviewModeConfig((config, syncState, errMsg) => {
@@ -708,7 +793,19 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     }
   }, [showToast]);
 
+  const requestUpgrade = useCallback((reason: string) => {
+    setUpgradePromptReason(reason);
+  }, []);
+
+  const dismissUpgradePrompt = useCallback(() => {
+    setUpgradePromptReason(null);
+  }, []);
+
   const backupToGoogleDrive = useCallback(async (): Promise<boolean> => {
+    if (!canUseDriveBackup) {
+      requestUpgrade('Google Drive cloud backup & restore is a Notes Premium feature.');
+      return false;
+    }
     setDriveBusy(true);
     try {
       const result = await uploadDriveBackup({
@@ -731,9 +828,13 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     } finally {
       setDriveBusy(false);
     }
-  }, [account.email, folders, notes, showToast]);
+  }, [account.email, canUseDriveBackup, folders, notes, requestUpgrade, showToast]);
 
   const restoreFromGoogleDrive = useCallback(async (): Promise<boolean> => {
+    if (!canUseDriveBackup) {
+      requestUpgrade('Google Drive cloud backup & restore is a Notes Premium feature.');
+      return false;
+    }
     setDriveBusy(true);
     try {
       const payload = await restoreDriveBackup();
@@ -752,7 +853,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     } finally {
       setDriveBusy(false);
     }
-  }, [showToast]);
+  }, [canUseDriveBackup, requestUpgrade, showToast]);
 
   const notesRef = useRef<Note[]>(notes);
   notesRef.current = notes;
@@ -920,14 +1021,6 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     [account.email, account.lastTransactionId, showToast]
   );
 
-  const requestUpgrade = useCallback((reason: string) => {
-    setUpgradePromptReason(reason);
-  }, []);
-
-  const dismissUpgradePrompt = useCallback(() => {
-    setUpgradePromptReason(null);
-  }, []);
-
   const activeNotes = useMemo(
     () =>
       notes
@@ -939,9 +1032,13 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     [notes]
   );
 
-  const canCreateNote = isPremium || activeNotes.length < FREE_LIMITS.maxActiveNotes;
-  const canCreateFolder = isPremium || folders.length < FREE_LIMITS.maxFolders;
-  const maxImagesAllowed = isPremium ? Number.POSITIVE_INFINITY : FREE_LIMITS.maxImagesPerNote;
+  const canCreateNote =
+    isPremium || activeNotes.length < appControlsConfig.freeLimits.maxActiveNotes;
+  const canCreateFolder =
+    isPremium || folders.length < appControlsConfig.freeLimits.maxFolders;
+  const maxImagesAllowed = isPremium
+    ? Number.POSITIVE_INFINITY
+    : appControlsConfig.freeLimits.maxImagesPerNote;
 
   const registerBackHandler = useCallback((fn: () => boolean) => {
     const id = ++backHandlerSeqRef.current;
@@ -1097,13 +1194,13 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
 
   const setPalette = useCallback(
     (nextPalette: ThemePalette) => {
-      if (nextPalette !== 'default' && !isPremium) {
+      if (nextPalette !== 'default' && !canUsePremiumPalettes) {
         requestUpgrade('Premium themes require a Notes Premium subscription.');
         return;
       }
       setPaletteState(nextPalette);
     },
-    [isPremium, requestUpgrade]
+    [canUsePremiumPalettes, requestUpgrade]
   );
 
   const setIsPremium = useCallback(
@@ -1201,6 +1298,34 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     [isAdmin, showToast]
   );
 
+  const updateAdminAppControlsConfig = useCallback(
+    async (
+      next: Pick<AppControlsConfig, 'freeLimits' | 'announcement' | 'premiumControls'>
+    ): Promise<boolean> => {
+      if (!isAdmin) {
+        showToast('Admin access required', 'danger');
+        return false;
+      }
+      setAppControlsSaving(true);
+      try {
+        const saved = await saveAppControlsConfig(next);
+        setAppControlsConfig(saved);
+        setAppControlsSyncState('synced');
+        setAppControlsSyncError(null);
+        showToast('App controls updated');
+        return true;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Could not save App Controls settings';
+        setAppControlsSyncError(msg);
+        showToast(msg, 'danger');
+        return false;
+      } finally {
+        setAppControlsSaving(false);
+      }
+    },
+    [isAdmin, showToast]
+  );
+
   const setNotePin = useCallback(
     (pin: string | null) => {
       setNotePinState(pin);
@@ -1214,6 +1339,14 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     [showToast]
   );
 
+  const setBiometricLockEnabled = useCallback(
+    (enabled: boolean) => {
+      setBiometricLockEnabledState(enabled);
+      showToast(enabled ? `${biometryLabel} unlock enabled` : `${biometryLabel} unlock turned off`);
+    },
+    [biometryLabel, showToast]
+  );
+
   const unlockNoteSession = useCallback((noteId: string) => {
     setUnlockedNoteIds((prev) => (prev.includes(noteId) ? prev : [...prev, noteId]));
   }, []);
@@ -1224,7 +1357,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
 
   const toggleLockNote = useCallback(
     (noteId: string) => {
-      if (!isPremium) {
+      if (!canUseNoteLock) {
         requestUpgrade('Secure Note Lock with 4-digit PIN is a Notes Premium feature.');
         return;
       }
@@ -1242,7 +1375,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         })
       );
     },
-    [isPremium, requestUpgrade, showToast]
+    [canUseNoteLock, requestUpgrade, showToast]
   );
 
   const setDefaultFolderId = useCallback(
@@ -1316,9 +1449,10 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
 
   const createNote = useCallback(
     (partial?: Partial<Note>): Note | null => {
-      if (!isPremium && activeNotes.length >= FREE_LIMITS.maxActiveNotes) {
+      const maxNotesLimit = appControlsConfig.freeLimits.maxActiveNotes;
+      if (!isPremium && activeNotes.length >= maxNotesLimit) {
         requestUpgrade(
-          `You have reached the Free plan limit of ${FREE_LIMITS.maxActiveNotes} active notes. Upgrade to Notes Premium for unlimited notes.`
+          `You have reached the Free plan limit of ${maxNotesLimit} active notes. Upgrade to Notes Premium for unlimited notes.`
         );
         return null;
       }
@@ -1348,7 +1482,14 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       setNotes((prev) => [newNote, ...prev]);
       return newNote;
     },
-    [activeNotes.length, defaultFolderId, folders, isPremium, requestUpgrade]
+    [
+      activeNotes.length,
+      appControlsConfig.freeLimits.maxActiveNotes,
+      defaultFolderId,
+      folders,
+      isPremium,
+      requestUpgrade,
+    ]
   );
 
   const updateNote = useCallback((id: string, patch: Partial<Note>) => {
@@ -1520,9 +1661,10 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
 
   const createFolder = useCallback(
     (name: string): Folder | null => {
-      if (!isPremium && folders.length >= FREE_LIMITS.maxFolders) {
+      const maxFoldersLimit = appControlsConfig.freeLimits.maxFolders;
+      if (!isPremium && folders.length >= maxFoldersLimit) {
         requestUpgrade(
-          `Free plan supports up to ${FREE_LIMITS.maxFolders} folders. Upgrade to Notes Premium for unlimited folders.`
+          `Free plan supports up to ${maxFoldersLimit} folders. Upgrade to Notes Premium for unlimited folders.`
         );
         return null;
       }
@@ -1536,7 +1678,13 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       showToast(`Folder "${trimmed}" created`);
       return newFolder;
     },
-    [folders.length, isPremium, requestUpgrade, showToast]
+    [
+      appControlsConfig.freeLimits.maxFolders,
+      folders.length,
+      isPremium,
+      requestUpgrade,
+      showToast,
+    ]
   );
 
   const renameFolder = useCallback(
@@ -1573,6 +1721,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     setDefaultFolderIdState('');
     setPaletteState('default');
     setNotePinState(null);
+    setBiometricLockEnabledState(true);
     setUnlockedNoteIds([]);
     showToast('Workspace cleared');
   }, [showToast]);
@@ -1657,6 +1806,14 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     textToolsSyncError,
     textToolsSaving,
     updateAdminTextToolsConfig,
+    appControlsConfig,
+    appControlsSyncState,
+    appControlsSyncError,
+    appControlsSaving,
+    updateAdminAppControlsConfig,
+    canUsePremiumPalettes,
+    canUseNoteLock,
+    canUseDriveBackup,
     canCreateNote,
     canCreateFolder,
     maxImagesAllowed,
@@ -1665,6 +1822,10 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     dismissUpgradePrompt,
     notePin,
     setNotePin,
+    biometricLockEnabled,
+    setBiometricLockEnabled,
+    biometricSupported,
+    biometryLabel,
     unlockedNoteIds,
     unlockNoteSession,
     lockNoteSession,

@@ -6,6 +6,7 @@ import {
   CloudDownload,
   CloudUpload,
   Loader2,
+  Lock,
   LogOut,
   RotateCcw,
   User,
@@ -22,6 +23,8 @@ export function AccountScreen() {
     activeNotes,
     folders,
     isPremium,
+    canUseDriveBackup,
+    requestUpgrade,
     authLoading,
     authError,
     driveBusy,
@@ -155,11 +158,19 @@ export function AccountScreen() {
               <button
                 type="button"
                 disabled={driveBusy}
-                onClick={() => setDriveBackupConfirmOpen(true)}
+                onClick={() => {
+                  if (!canUseDriveBackup) {
+                    requestUpgrade('Google Drive cloud backup & restore is a Notes Premium feature.');
+                    return;
+                  }
+                  setDriveBackupConfirmOpen(true);
+                }}
                 className="flex w-full min-h-[46px] items-center justify-center gap-2 rounded-xl bg-[var(--text-primary)] dark:bg-[var(--accent-primary)] px-4 text-sm font-semibold text-[var(--bg-card)] dark:text-[#171717] disabled:opacity-60 transition-opacity hover:opacity-90 cursor-pointer"
               >
                 {driveBusy ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
+                ) : !canUseDriveBackup ? (
+                  <Lock className="h-4 w-4" strokeWidth={2} />
                 ) : (
                   <CloudUpload className="h-4 w-4" strokeWidth={2} />
                 )}
@@ -169,11 +180,19 @@ export function AccountScreen() {
               <button
                 type="button"
                 disabled={driveBusy}
-                onClick={() => setDriveRestoreConfirmOpen(true)}
+                onClick={() => {
+                  if (!canUseDriveBackup) {
+                    requestUpgrade('Google Drive cloud backup & restore is a Notes Premium feature.');
+                    return;
+                  }
+                  setDriveRestoreConfirmOpen(true);
+                }}
                 className="flex w-full min-h-[46px] items-center justify-center gap-2 rounded-xl border border-[var(--divider)] bg-[var(--bg-canvas)] px-4 text-sm font-semibold text-[var(--text-primary)] disabled:opacity-60 transition-colors hover:bg-[var(--bg-subtle)] cursor-pointer"
               >
                 {driveBusy ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
+                ) : !canUseDriveBackup ? (
+                  <Lock className="h-4 w-4 text-[var(--accent-primary)]" strokeWidth={2} />
                 ) : (
                   <CloudDownload className="h-4 w-4" strokeWidth={2} />
                 )}

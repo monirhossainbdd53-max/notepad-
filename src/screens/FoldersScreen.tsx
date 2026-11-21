@@ -14,7 +14,7 @@ import {
 import { ConfirmDialog, FolderNameDialog } from '../components/ConfirmDialog';
 import { NavigationShell } from '../components/NavigationShell';
 import { useNotes } from '../context/NotesContext';
-import { FREE_LIMITS, Folder } from '../types/notes';
+import { Folder } from '../types/notes';
 
 export function FoldersScreen() {
   const {
@@ -27,10 +27,12 @@ export function FoldersScreen() {
     deleteFolder,
     canCreateFolder,
     isPremium,
+    appControlsConfig,
     requestUpgrade,
     navigate,
   } = useNotes();
 
+  const maxFoldersLimit = appControlsConfig.freeLimits.maxFolders;
   const [createOpen, setCreateOpen] = useState(false);
   const [renameTarget, setRenameTarget] = useState<Folder | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Folder | null>(null);
@@ -39,7 +41,7 @@ export function FoldersScreen() {
   const handleOpenCreateFolder = () => {
     if (!canCreateFolder) {
       requestUpgrade(
-        `Free plan supports up to ${FREE_LIMITS.maxFolders} folders. Upgrade to Notes Premium for unlimited folders.`
+        `Free plan supports up to ${maxFoldersLimit} folders. Upgrade to Notes Premium for unlimited folders.`
       );
       return;
     }
@@ -76,7 +78,7 @@ export function FoldersScreen() {
 
         {!isPremium && (
           <p className="mt-1 text-xs text-[var(--text-secondary)] tabular-nums">
-            {folders.length} of {FREE_LIMITS.maxFolders} folders used on Free plan
+            {folders.length} of {maxFoldersLimit} folders used on Free plan
           </p>
         )}
       </header>

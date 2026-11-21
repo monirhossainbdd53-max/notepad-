@@ -356,6 +356,16 @@
   font-weight: 600;
 }
 
+.note-content:not(.note-readonly) table.note-table:focus-within {
+  border-color: var(--accent-primary);
+}
+
+.note-content:not(.note-readonly) table.note-table td:focus,
+.note-content:not(.note-readonly) table.note-table th:focus {
+  outline: none;
+  background-color: var(--accent-soft);
+}
+
 .note-content mark.find-match {
   background-color: var(--accent-soft);
   color: var(--text-primary);
