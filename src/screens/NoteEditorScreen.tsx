@@ -230,7 +230,7 @@ export function NoteEditorScreen({ mode }: NoteEditorScreenProps) {
         className="h-[100dvh] flex flex-col overflow-hidden bg-[var(--bg-canvas)]"
       >
         {/* Top Editor Header */}
-        <header className="shrink-0 z-30 flex h-[57px] items-center justify-between bg-[var(--bg-canvas)]/95 backdrop-blur-md border-b border-[var(--divider)] px-3 sm:px-6">
+        <header className="shrink-0 z-30 select-none flex h-[57px] items-center justify-between bg-[var(--bg-canvas)]/95 backdrop-blur-md border-b border-[var(--divider)] px-3 sm:px-6">
           <div className="flex items-center gap-2">
             <button
               type="button"

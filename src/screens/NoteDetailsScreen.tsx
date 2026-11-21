@@ -24,6 +24,7 @@ import {
   countWords,
   extractNoteImages,
   formatFullDate,
+  sanitizeNoteThemeHtml,
   stripHtmlToText,
   toggleChecklistItemInHtml,
 } from '../utils/noteHelpers';
@@ -118,7 +119,9 @@ export function NoteDetailsScreen() {
   const [pinCreateOpen, setPinCreateOpen] = useState(false);
   const [findOpen, setFindOpen] = useState(false);
   const [findQuery, setFindQuery] = useState('');
+  const [isBodySelecting, setIsBodySelecting] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
 
   useBackHandler(menuOpen, () => setMenuOpen(false));
   useBackHandler(findOpen, () => {
@@ -128,11 +131,54 @@ export function NoteDetailsScreen() {
   useBackHandler(Boolean(lightboxSrc), () => setLightboxSrc(null));
 
   const highlightedResult = useMemo(() => {
+    const cleanHtml = sanitizeNoteThemeHtml(note?.content || '');
     if (!note || !findOpen || !findQuery.trim()) {
-      return { html: note?.content || '', count: 0 };
+      return { html: cleanHtml, count: 0 };
     }
-    return highlightSearchMatches(note.content, findQuery);
+    return highlightSearchMatches(cleanHtml, findQuery);
   }, [findOpen, findQuery, note]);
+
+  useEffect(() => {
+    const handleSelectionChange = () => {
+      const body = bodyRef.current;
+      if (!body) return;
+      const sel = window.getSelection();
+      if (!sel || sel.rangeCount === 0) {
+        setIsBodySelecting(false);
+        return;
+      }
+      const anchor = sel.anchorNode;
+      if (anchor && body.contains(anchor)) {
+        setIsBodySelecting(true);
+      } else if (sel.isCollapsed) {
+        setIsBodySelecting(false);
+      }
+    };
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 'a') return;
+      const activeTag = (document.activeElement as HTMLElement | null)?.tagName;
+      if (activeTag === 'INPUT' || activeTag === 'TEXTAREA') return;
+      const body = bodyRef.current;
+      if (!body) return;
+      e.preventDefault();
+      const sel = window.getSelection();
+      if (sel) {
+        const range = document.createRange();
+        range.selectNodeContents(body);
+        sel.removeAllRanges();
+        sel.addRange(range);
+        setIsBodySelecting(true);
+      }
+    };
+
+    document.addEventListener('selectionchange', handleSelectionChange);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('selectionchange', handleSelectionChange);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, []);
 
   useEffect(() => {
     const onOutside = (e: MouseEvent) => {
@@ -261,7 +307,7 @@ export function NoteDetailsScreen() {
     <NavigationShell showMobileTabs={false}>
       <div className="min-h-screen flex flex-col bg-[var(--bg-canvas)]">
         {/* Header */}
-        <header className="sticky top-0 z-30 flex h-[57px] items-center justify-between bg-[var(--bg-canvas)]/95 backdrop-blur-md border-b border-[var(--divider)] px-3 sm:px-6">
+        <header className="sticky top-0 z-30 select-none flex h-[57px] items-center justify-between bg-[var(--bg-canvas)]/95 backdrop-blur-md border-b border-[var(--divider)] px-3 sm:px-6">
           <button
             type="button"
             onClick={goBack}
@@ -464,11 +510,16 @@ export function NoteDetailsScreen() {
 
         {/* Note Content */}
         <article className="flex-1 px-5 sm:px-8 pt-7 pb-24 max-w-3xl w-full mx-auto">
-          <h1 className="text-2xl sm:text-[30px] font-bold tracking-tight text-[var(--text-primary)] leading-tight text-balance">
+          <h1
+            onPointerDown={() => setIsBodySelecting(false)}
+            className={`text-2xl sm:text-[30px] font-bold tracking-tight text-[var(--text-primary)] leading-tight text-balance ${
+              isBodySelecting ? 'select-none' : 'select-text'
+            }`}
+          >
             {note.title.trim() || 'Untitled Note'}
           </h1>
 
-          <div className="mt-2.5 flex flex-wrap items-center gap-2 text-xs text-[var(--text-secondary)] tabular-nums">
+          <div className="mt-2.5 select-none flex flex-wrap items-center gap-2 text-xs text-[var(--text-secondary)] tabular-nums">
             <span>{formatFullDate(note.updatedAt)}</span>
             {folder && (
               <>
@@ -483,8 +534,10 @@ export function NoteDetailsScreen() {
           <div className="my-5 h-px bg-[var(--divider)]" />
 
           <div
+            ref={bodyRef}
+            onPointerDown={() => setIsBodySelecting(true)}
             onClick={handleContentClick}
-            className="note-content note-readonly text-[var(--text-primary)]"
+            className="note-content note-readonly select-text text-[var(--text-primary)]"
             dangerouslySetInnerHTML={{
               __html:
                 highlightedResult.html ||

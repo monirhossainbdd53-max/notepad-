@@ -31,7 +31,11 @@ import { Capacitor } from '@capacitor/core';
 import { SpeechRecognition as NativeSpeechRecognition } from '@capacitor-community/speech-recognition';
 import { useBackHandler, useNotes } from '../context/NotesContext';
 import { FREE_LIMITS } from '../types/notes';
-import { readAndCompressImage } from '../utils/noteHelpers';
+import {
+  readAndCompressImage,
+  sanitizeNoteThemeElements,
+  sanitizeNoteThemeHtml,
+} from '../utils/noteHelpers';
 import { TRANSLATE_LANGUAGES, translateText } from '../utils/translateHelper';
 import { SketchModal } from './SketchModal';
 
@@ -168,7 +172,11 @@ export function RichTextEditor({
   const [dragGhost, setDragGhost] = useState<DragGhostState | null>(null);
   const [dropIndicatorTop, setDropIndicatorTop] = useState<number | null>(null);
   const [insertMenuOpen, setInsertMenuOpen] = useState(false);
+  const [isBodyFocused, setIsBodyFocused] = useState(false);
   const [sketchOpen, setSketchOpen] = useState(false);
+  const [tableModalOpen, setTableModalOpen] = useState(false);
+  const [tableColsInput, setTableColsInput] = useState('3');
+  const [tableRowsInput, setTableRowsInput] = useState('3');
   const [linkModalOpen, setLinkModalOpen] = useState(false);
   const [linkUrl, setLinkUrl] = useState('');
   const [linkText, setLinkText] = useState('');
@@ -215,8 +223,8 @@ export function RichTextEditor({
   useEffect(() => {
     if (!editorRef.current) return;
     if (editorRef.current.innerHTML !== content && !isInternalChangeRef.current) {
-      editorRef.current.innerHTML = content || '';
-      historyRef.current = [content || ''];
+      editorRef.current.innerHTML = sanitizeNoteThemeHtml(content || '');
+      historyRef.current = [editorRef.current.innerHTML];
       historyIndexRef.current = 0;
       savedRangeRef.current = null;
       setCanUndo(false);
@@ -295,6 +303,7 @@ export function RichTextEditor({
 
   const emitChange = useCallback(() => {
     if (!editorRef.current) return;
+    sanitizeNoteThemeElements(editorRef.current);
     const html = editorRef.current.innerHTML;
     isInternalChangeRef.current = true;
     pushHistory(html);
@@ -582,12 +591,13 @@ export function RichTextEditor({
   const handleToggleHighlight = () => {
     if (!editorRef.current) return;
     editorRef.current.focus();
-    const currentBg = document.queryCommandValue('hiliteColor');
+    const currentBg = (document.queryCommandValue('hiliteColor') || '')
+      .replace(/\s+/g, '')
+      .toLowerCase();
     const isHighlighted =
-      currentBg &&
-      currentBg !== 'transparent' &&
-      currentBg !== 'rgba(0, 0, 0, 0)' &&
-      currentBg !== 'rgb(255, 255, 255)';
+      currentBg === '#fff1b8' ||
+      currentBg === 'rgb(255,241,184)' ||
+      currentBg === 'rgba(255,241,184,1)';
     document.execCommand('hiliteColor', false, isHighlighted ? 'transparent' : '#FFF1B8');
     emitChange();
   };
@@ -611,12 +621,37 @@ export function RichTextEditor({
     emitChange();
   };
 
-  const handleInsertTable = () => {
+  const handleOpenTableModal = () => {
+    saveSelection();
     setInsertMenuOpen(false);
+    setTableColsInput('3');
+    setTableRowsInput('3');
+    setTableModalOpen(true);
+  };
+
+  const handleConfirmTable = (e: React.FormEvent) => {
+    e.preventDefault();
+    const parsedCols = parseInt(tableColsInput, 10);
+    const parsedRows = parseInt(tableRowsInput, 10);
+    if (!Number.isFinite(parsedCols) || parsedCols < 1 || !Number.isFinite(parsedRows) || parsedRows < 1) {
+      return;
+    }
+    const cols = Math.min(500, parsedCols);
+    const rows = Math.min(2000, parsedRows);
+
+    setTableModalOpen(false);
     restoreSavedRange();
+
+    const headerCells = Array.from(
+      { length: cols },
+      (_, idx) => `<th>Column ${idx + 1}</th>`
+    ).join('');
+    const bodyCells = Array.from({ length: cols }, () => '<td><br></td>').join('');
+    const bodyRows = Array.from({ length: rows }, () => `<tr>${bodyCells}</tr>`).join('');
+
     const tableHtml =
-      '<table class="note-table"><thead><tr><th>Column 1</th><th>Column 2</th></tr></thead>' +
-      '<tbody><tr><td><br></td><td><br></td></tr><tr><td><br></td><td><br></td></tr></tbody></table><p><br></p>';
+      `<div class="note-table-wrap"><table class="note-table"><thead><tr>${headerCells}</tr></thead>` +
+      `<tbody>${bodyRows}</tbody></table></div><p><br></p>`;
     document.execCommand('insertHTML', false, tableHtml);
     emitChange();
   };
@@ -1176,7 +1211,24 @@ export function RichTextEditor({
       if (loaded.length > 0) {
         insertImageBlocksAtSavedRange(loaded);
       }
+      return;
     }
+
+    const pastedHtml = e.clipboardData?.getData('text/html');
+    if (pastedHtml) {
+      e.preventDefault();
+      const cleanedHtml = sanitizeNoteThemeHtml(pastedHtml);
+      document.execCommand('insertHTML', false, cleanedHtml);
+      emitChange();
+      return;
+    }
+
+    window.setTimeout(() => {
+      if (editorRef.current) {
+        sanitizeNoteThemeElements(editorRef.current);
+        emitChange();
+      }
+    }, 0);
   };
 
   const handleRemoveLegacyImage = (index: number) => {
@@ -1286,9 +1338,12 @@ export function RichTextEditor({
           type="text"
           value={title}
           onChange={(e) => onChangeTitle(e.target.value)}
+          onFocus={() => setIsBodyFocused(false)}
           placeholder="Note title"
           aria-label="Note title"
-          className="w-full bg-transparent text-2xl sm:text-[28px] font-bold tracking-tight text-[var(--text-primary)] placeholder:text-[var(--text-secondary)]/60 focus:outline-none"
+          className={`w-full bg-transparent text-2xl sm:text-[28px] font-bold tracking-tight text-[var(--text-primary)] placeholder:text-[var(--text-secondary)]/60 focus:outline-none ${
+            isBodyFocused ? 'select-none' : ''
+          }`}
         />
 
         <div ref={editorWrapperRef} className="relative mt-4">
@@ -1296,7 +1351,7 @@ export function RichTextEditor({
             <div
               aria-hidden="true"
               style={{ top: `${dropIndicatorTop}px` }}
-              className="pointer-events-none absolute left-0 right-0 z-30 flex items-center"
+              className="pointer-events-none select-none absolute left-0 right-0 z-30 flex items-center"
             >
               <span className="h-2.5 w-2.5 -ml-1 rounded-full bg-[var(--accent-primary)] shrink-0" />
               <span className="h-0.5 flex-1 bg-[var(--accent-primary)] rounded-full" />
@@ -1309,6 +1364,22 @@ export function RichTextEditor({
             contentEditable
             suppressContentEditableWarning
             data-placeholder="Start writing..."
+            onFocus={() => setIsBodyFocused(true)}
+            onKeyDown={(e) => {
+              if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
+                e.preventDefault();
+                if (editorRef.current) {
+                  const sel = window.getSelection();
+                  if (sel) {
+                    const range = document.createRange();
+                    range.selectNodeContents(editorRef.current);
+                    sel.removeAllRanges();
+                    sel.addRange(range);
+                    savedRangeRef.current = range.cloneRange();
+                  }
+                }
+              }
+            }}
             onInput={() => {
               saveSelection();
               emitChange();
@@ -1325,18 +1396,21 @@ export function RichTextEditor({
               saveSelection();
               updateToolbarState();
             }}
-            onBlur={() => saveSelection()}
+            onBlur={() => {
+              saveSelection();
+              setIsBodyFocused(false);
+            }}
             onPointerDown={handleEditorPointerDown}
             onClick={handleEditorClick}
             onPaste={handlePaste}
             aria-label="Note content"
-            className="note-content min-h-[260px] text-[var(--text-primary)] focus:outline-none"
+            className="note-content min-h-[260px] select-text text-[var(--text-primary)] focus:outline-none"
           />
         </div>
 
         {/* Legacy bottom attachments fallback (if any older note has note.images) */}
         {images.length > 0 && (
-          <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-3 select-none">
             {images.map((src, idx) => (
               <div
                 key={`${idx}_${src.slice(0, 32)}`}
@@ -1363,7 +1437,7 @@ export function RichTextEditor({
       </div>
 
       {/* Keyboard-Docked Formatting & Image Toolbar */}
-      <div className="shrink-0 relative z-30 bg-[var(--bg-canvas)]/95 backdrop-blur-md border-t border-[var(--divider)] px-3 sm:px-6 py-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))]">
+      <div className="shrink-0 relative z-30 select-none bg-[var(--bg-canvas)]/95 backdrop-blur-md border-t border-[var(--divider)] px-3 sm:px-6 py-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))]">
         {sizeSliderOpen && (
           <div className="mb-2 flex items-center gap-3 rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] px-3.5 py-2">
             <span className="text-[11px] font-semibold text-[var(--text-secondary)] shrink-0">
@@ -1597,52 +1671,56 @@ export function RichTextEditor({
               <Heading2 className="h-4 w-4" strokeWidth={2} />
             </button>
 
+            <div className="mx-1 h-4 w-px bg-[var(--divider)] shrink-0" />
+
             <button
               type="button"
-              onMouseDown={(e) => {
-                e.preventDefault();
-                handlePremiumFormat('Quote blocks', handleToggleBlockquote);
-              }}
-              aria-label="Quote"
-              title={isPremium ? 'Quote' : 'Quote (Premium)'}
-              className={toolbarBtnClass(false)}
+              onMouseDown={() => saveSelection()}
+              onTouchStart={() => saveSelection()}
+              onClick={handleOpenTableModal}
+              aria-label="Simple Table"
+              title="Simple Table"
+              className={toolbarBtnClass(tableModalOpen)}
             >
-              <Quote className="h-3.5 w-3.5" strokeWidth={2} />
-              {!isPremium && (
-                <Lock className="h-2.5 w-2.5 absolute bottom-1 right-1 text-[var(--accent-primary)]" />
-              )}
+              <Table2 className="h-4 w-4" strokeWidth={2} />
+            </button>
+
+            <button
+              type="button"
+              onMouseDown={() => saveSelection()}
+              onTouchStart={() => saveSelection()}
+              onClick={handleOpenLinkModal}
+              aria-label="Insert Link"
+              title="Insert Link"
+              className={toolbarBtnClass(linkModalOpen)}
+            >
+              <Link2 className="h-4 w-4" strokeWidth={2} />
             </button>
 
             <button
               type="button"
               onMouseDown={(e) => {
                 e.preventDefault();
-                handlePremiumFormat('Numbered lists', () => handleFormat('insertOrderedList'));
+                saveSelection();
+                handleInsertDivider();
               }}
-              aria-label="Numbered list"
-              title={isPremium ? 'Numbered list' : 'Numbered list (Premium)'}
-              className={toolbarBtnClass(activeFormats.orderedList)}
+              aria-label="Divider Line"
+              title="Divider Line"
+              className={toolbarBtnClass(false)}
             >
-              <ListOrdered className="h-4 w-4" strokeWidth={2} />
-              {!isPremium && (
-                <Lock className="h-2.5 w-2.5 absolute bottom-1 right-1 text-[var(--accent-primary)]" />
-              )}
+              <Minus className="h-4 w-4" strokeWidth={2} />
             </button>
 
             <button
               type="button"
-              onMouseDown={(e) => {
-                e.preventDefault();
-                handlePremiumFormat('Interactive checklists', handleInsertChecklist);
-              }}
-              aria-label="Checklist"
-              title={isPremium ? 'Checklist' : 'Checklist (Premium)'}
-              className={toolbarBtnClass(false)}
+              onMouseDown={() => saveSelection()}
+              onTouchStart={() => saveSelection()}
+              onClick={handleOpenSketch}
+              aria-label="Quick Sketch"
+              title="Quick Sketch"
+              className={toolbarBtnClass(sketchOpen)}
             >
-              <CheckSquare className="h-4 w-4" strokeWidth={2} />
-              {!isPremium && (
-                <Lock className="h-2.5 w-2.5 absolute bottom-1 right-1 text-[var(--accent-primary)]" />
-              )}
+              <PenTool className="h-4 w-4" strokeWidth={2} />
             </button>
 
             <div className="mx-1 h-4 w-px bg-[var(--divider)] shrink-0" />
@@ -1689,6 +1767,17 @@ export function RichTextEditor({
 
             <button
               type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => handleSwitchVoiceLanguage(speechLang === 'bn-BD' ? 'en-US' : 'bn-BD')}
+              aria-label="Switch voice language"
+              title="Switch voice language"
+              className="h-9 px-2 rounded-xl flex items-center justify-center text-[11px] font-semibold text-[var(--accent-primary)] hover:bg-[var(--bg-subtle)] shrink-0 cursor-pointer"
+            >
+              {speechLang === 'bn-BD' ? 'বাংলা' : 'EN'}
+            </button>
+
+            <button
+              type="button"
               onPointerDown={(e) => {
                 e.preventDefault();
                 handleOpenTranslateBar();
@@ -1702,72 +1791,74 @@ export function RichTextEditor({
           </div>
 
           <div className="flex items-center gap-0.5 sm:gap-1 shrink-0">
-            {/* + Insert Extra Tools Menu */}
+            {/* + Premium Text Tools Menu */}
             <div className="relative" ref={insertMenuRef}>
               <button
                 type="button"
                 onMouseDown={() => saveSelection()}
                 onTouchStart={() => saveSelection()}
                 onClick={() => setInsertMenuOpen((v) => !v)}
-                aria-label="Insert more tools"
-                title="Insert table, link, divider, sketch"
+                aria-label="Premium text tools"
+                title="Premium text tools"
                 className={toolbarBtnClass(insertMenuOpen)}
               >
                 <Plus className="h-4 w-4" strokeWidth={2.2} />
               </button>
 
               {insertMenuOpen && (
-                <div className="absolute right-0 bottom-full mb-2 w-52 rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] py-1.5 z-40 shadow-lg">
+                <div className="absolute right-0 bottom-full mb-2 w-56 rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] py-1.5 z-40 shadow-lg">
                   <button
                     type="button"
-                    onClick={handleInsertTable}
-                    className="flex w-full min-h-[40px] items-center gap-2.5 px-3.5 text-sm text-[var(--text-primary)] hover:bg-[var(--bg-subtle)] cursor-pointer"
-                  >
-                    <Table2 className="h-4 w-4 text-[var(--text-secondary)]" strokeWidth={1.85} />
-                    Simple Table
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={handleOpenLinkModal}
-                    className="flex w-full min-h-[40px] items-center gap-2.5 px-3.5 text-sm text-[var(--text-primary)] hover:bg-[var(--bg-subtle)] cursor-pointer"
-                  >
-                    <Link2 className="h-4 w-4 text-[var(--text-secondary)]" strokeWidth={1.85} />
-                    Insert Link
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={handleInsertDivider}
-                    className="flex w-full min-h-[40px] items-center gap-2.5 px-3.5 text-sm text-[var(--text-primary)] hover:bg-[var(--bg-subtle)] cursor-pointer"
-                  >
-                    <Minus className="h-4 w-4 text-[var(--text-secondary)]" strokeWidth={1.85} />
-                    Divider Line
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={handleOpenSketch}
-                    className="flex w-full min-h-[40px] items-center gap-2.5 px-3.5 text-sm text-[var(--text-primary)] hover:bg-[var(--bg-subtle)] cursor-pointer"
-                  >
-                    <PenTool className="h-4 w-4 text-[var(--text-secondary)]" strokeWidth={1.85} />
-                    Quick Sketch
-                  </button>
-
-                  <div className="my-1 h-px bg-[var(--divider)]" />
-
-                  <button
-                    type="button"
-                    onClick={() => handleSwitchVoiceLanguage(speechLang === 'bn-BD' ? 'en-US' : 'bn-BD')}
-                    className="flex w-full min-h-[40px] items-center justify-between px-3.5 text-sm text-[var(--text-primary)] hover:bg-[var(--bg-subtle)] cursor-pointer"
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      setInsertMenuOpen(false);
+                      handlePremiumFormat('Quote blocks', handleToggleBlockquote);
+                    }}
+                    className="flex w-full min-h-[42px] items-center justify-between gap-2.5 px-3.5 text-sm text-[var(--text-primary)] hover:bg-[var(--bg-subtle)] cursor-pointer"
                   >
                     <span className="flex items-center gap-2.5">
-                      <Mic className="h-4 w-4 text-[var(--text-secondary)]" strokeWidth={1.85} />
-                      Voice Language
+                      <Quote className="h-4 w-4 text-[var(--text-secondary)]" strokeWidth={1.85} />
+                      Quote
                     </span>
-                    <span className="text-xs font-semibold text-[var(--accent-primary)]">
-                      {speechLang === 'bn-BD' ? 'বাংলা' : 'EN'}
+                    {!isPremium && (
+                      <Lock className="h-3.5 w-3.5 text-[var(--accent-primary)] shrink-0" />
+                    )}
+                  </button>
+
+                  <button
+                    type="button"
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      setInsertMenuOpen(false);
+                      handlePremiumFormat('Numbered lists', () => handleFormat('insertOrderedList'));
+                    }}
+                    className="flex w-full min-h-[42px] items-center justify-between gap-2.5 px-3.5 text-sm text-[var(--text-primary)] hover:bg-[var(--bg-subtle)] cursor-pointer"
+                  >
+                    <span className="flex items-center gap-2.5">
+                      <ListOrdered className="h-4 w-4 text-[var(--text-secondary)]" strokeWidth={1.85} />
+                      Numbered List
                     </span>
+                    {!isPremium && (
+                      <Lock className="h-3.5 w-3.5 text-[var(--accent-primary)] shrink-0" />
+                    )}
+                  </button>
+
+                  <button
+                    type="button"
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      setInsertMenuOpen(false);
+                      handlePremiumFormat('Interactive checklists', handleInsertChecklist);
+                    }}
+                    className="flex w-full min-h-[42px] items-center justify-between gap-2.5 px-3.5 text-sm text-[var(--text-primary)] hover:bg-[var(--bg-subtle)] cursor-pointer"
+                  >
+                    <span className="flex items-center gap-2.5">
+                      <CheckSquare className="h-4 w-4 text-[var(--text-secondary)]" strokeWidth={1.85} />
+                      Checklist
+                    </span>
+                    {!isPremium && (
+                      <Lock className="h-3.5 w-3.5 text-[var(--accent-primary)] shrink-0" />
+                    )}
                   </button>
                 </div>
               )}
@@ -1820,6 +1911,66 @@ export function RichTextEditor({
             alt=""
             className="h-full w-full object-cover"
           />
+        </div>
+      )}
+
+      {/* Insert Table Modal */}
+      {tableModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 px-4"
+          role="dialog"
+          aria-modal="true"
+          onClick={() => setTableModalOpen(false)}
+        >
+          <form
+            onSubmit={handleConfirmTable}
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-sm rounded-3xl bg-[var(--bg-card)] border border-[var(--divider)] p-6 space-y-3"
+          >
+            <h3 className="text-lg font-bold text-[var(--text-primary)]">Simple Table</h3>
+            <div className="grid grid-cols-2 gap-3">
+              <input
+                type="number"
+                inputMode="numeric"
+                min={1}
+                autoFocus
+                value={tableColsInput}
+                onChange={(e) => setTableColsInput(e.target.value)}
+                placeholder="Columns"
+                aria-label="Columns"
+                className="w-full min-h-[44px] rounded-xl bg-[var(--bg-canvas)] border border-[var(--divider)] px-3.5 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-primary)]"
+              />
+              <input
+                type="number"
+                inputMode="numeric"
+                min={1}
+                value={tableRowsInput}
+                onChange={(e) => setTableRowsInput(e.target.value)}
+                placeholder="Rows"
+                aria-label="Rows"
+                className="w-full min-h-[44px] rounded-xl bg-[var(--bg-canvas)] border border-[var(--divider)] px-3.5 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-primary)]"
+              />
+            </div>
+            <div className="pt-2 flex gap-2.5">
+              <button
+                type="button"
+                onClick={() => setTableModalOpen(false)}
+                className="flex-1 min-h-[44px] rounded-full bg-[var(--bg-subtle)] text-sm font-semibold text-[var(--text-primary)] cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={
+                  !(parseInt(tableColsInput, 10) >= 1) ||
+                  !(parseInt(tableRowsInput, 10) >= 1)
+                }
+                className="flex-1 min-h-[44px] rounded-full bg-[var(--text-primary)] dark:bg-[var(--accent-primary)] text-sm font-semibold text-[var(--bg-card)] dark:text-[#171717] disabled:opacity-40 cursor-pointer"
+              >
+                Insert
+              </button>
+            </div>
+          </form>
         </div>
       )}
 

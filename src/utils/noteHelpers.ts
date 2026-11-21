@@ -151,3 +151,76 @@ export function readAndCompressImage(file: File, maxWidth = 1200): Promise<strin
     reader.readAsDataURL(file);
   });
 }
+
+function isIntentionalHighlightBg(raw: string): boolean {
+  const normalized = raw.replace(/\s+/g, '').toLowerCase();
+  return (
+    normalized === '#fff1b8' ||
+    normalized === 'rgb(255,241,184)' ||
+    normalized === 'rgba(255,241,184,1)'
+  );
+}
+
+export function sanitizeNoteThemeElements(root: HTMLElement): void {
+  const elements = root.querySelectorAll<HTMLElement>('*');
+  elements.forEach((el) => {
+    if (
+      el.closest('.note-image-controls') ||
+      el.closest('.note-check-box') ||
+      el.classList.contains('note-image-controls') ||
+      el.classList.contains('note-check-box')
+    ) {
+      return;
+    }
+
+    const bgColor = el.style.backgroundColor || '';
+    const bgShorthand = el.style.background || '';
+    const markedHighlight = el.getAttribute('data-note-highlight') === 'true';
+
+    if (isIntentionalHighlightBg(bgColor) || (markedHighlight && !bgColor)) {
+      if (isIntentionalHighlightBg(bgColor)) {
+        el.setAttribute('data-note-highlight', 'true');
+        el.style.backgroundColor = '#FFF1B8';
+        el.style.color = '#202124';
+      } else {
+        el.removeAttribute('data-note-highlight');
+      }
+    } else {
+      if (markedHighlight) {
+        el.removeAttribute('data-note-highlight');
+      }
+      if (bgColor) {
+        el.style.removeProperty('background-color');
+      }
+      if (bgShorthand) {
+        el.style.removeProperty('background');
+      }
+      if (el.hasAttribute('bgcolor')) {
+        el.removeAttribute('bgcolor');
+      }
+    }
+
+    if (el.getAttribute('data-note-highlight') !== 'true') {
+      if (el.style.color && el.tagName !== 'A') {
+        el.style.removeProperty('color');
+      }
+      if (el.hasAttribute('color')) {
+        el.removeAttribute('color');
+      }
+    }
+
+    if (el.hasAttribute('style') && el.getAttribute('style')?.trim() === '') {
+      el.removeAttribute('style');
+    }
+  });
+}
+
+export function sanitizeNoteThemeHtml(html: string): string {
+  if (!html || typeof window === 'undefined') return html;
+  const container = document.createElement('div');
+  container.innerHTML = html;
+  container.querySelectorAll('script, style, meta, link').forEach((node) => node.remove());
+  sanitizeNoteThemeElements(container);
+  return container.innerHTML;
+}
+
