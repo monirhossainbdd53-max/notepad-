@@ -30,7 +30,8 @@ import {
 import { Capacitor } from '@capacitor/core';
 import { SpeechRecognition as NativeSpeechRecognition } from '@capacitor-community/speech-recognition';
 import { useBackHandler, useNotes } from '../context/NotesContext';
-import { FREE_LIMITS } from '../types/notes';
+import { TEXT_TOOLS_CATALOG, TextToolMeta } from '../services/textToolsService';
+import { FREE_LIMITS, TextToolId } from '../types/notes';
 import {
   readAndCompressImage,
   sanitizeNoteThemeElements,
@@ -147,7 +148,8 @@ export function RichTextEditor({
   onChangeImages,
   autoFocusBody = false,
 }: RichTextEditorProps) {
-  const { isPremium, maxImagesAllowed, requestUpgrade, showToast } = useNotes();
+  const { isPremium, maxImagesAllowed, requestUpgrade, showToast, textToolsConfig } = useNotes();
+  const toolRules = textToolsConfig.tools;
 
   const editorWrapperRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<HTMLDivElement>(null);
@@ -955,9 +957,13 @@ export function RichTextEditor({
     }
   };
 
-  const handlePremiumFormat = (label: string, action: () => void) => {
-    if (!isPremium) {
-      requestUpgrade(`${label} is part of Advanced Note Formatting in Notes Premium.`);
+  const isToolEnabled = (id: TextToolId) => toolRules[id]?.enabled !== false;
+  const isToolPremium = (id: TextToolId) => Boolean(toolRules[id]?.premium);
+
+  const runToolAction = (id: TextToolId, upgradeTitle: string, action: () => void) => {
+    if (!isToolEnabled(id)) return;
+    if (isToolPremium(id) && !isPremium) {
+      requestUpgrade(`${upgradeTitle} is part of Notes Premium.`);
       return;
     }
     action();
@@ -1576,322 +1582,590 @@ export function RichTextEditor({
         )}
 
         <div className="flex items-center justify-between gap-1">
-          <div className="flex items-center gap-0.5 sm:gap-1 overflow-x-auto no-scrollbar min-w-0">
-            {/* Free Basic Formatting */}
-            <button
-              type="button"
-              onMouseDown={(e) => {
-                e.preventDefault();
-                handleFormat('bold');
-              }}
-              aria-label="Bold"
-              title="Bold"
-              className={toolbarBtnClass(activeFormats.bold)}
-            >
-              <Bold className="h-4 w-4" strokeWidth={2.2} />
-            </button>
+          {(() => {
+            const isFreeTool = (id: TextToolId) =>
+              isToolEnabled(id) && !isToolPremium(id);
 
-            <button
-              type="button"
-              onMouseDown={(e) => {
-                e.preventDefault();
-                handleFormat('italic');
-              }}
-              aria-label="Italic"
-              title="Italic"
-              className={toolbarBtnClass(activeFormats.italic)}
-            >
-              <Italic className="h-4 w-4" strokeWidth={2} />
-            </button>
+            const group1Visible =
+              isFreeTool('bold') ||
+              isFreeTool('italic') ||
+              isFreeTool('underline') ||
+              isFreeTool('strikethrough') ||
+              isFreeTool('highlight') ||
+              isFreeTool('bullet_list') ||
+              isFreeTool('numbered_list') ||
+              isFreeTool('quote') ||
+              isFreeTool('checklist');
+            const group2Visible = isFreeTool('text_size');
+            const group3Visible =
+              isFreeTool('simple_table') ||
+              isFreeTool('insert_link') ||
+              isFreeTool('divider') ||
+              isFreeTool('quick_sketch');
+            const group4Visible =
+              isFreeTool('add_image') ||
+              isFreeTool('take_photo') ||
+              isFreeTool('voice_typing') ||
+              isFreeTool('translate');
 
-            <button
-              type="button"
-              onMouseDown={(e) => {
-                e.preventDefault();
-                handleFormat('underline');
-              }}
-              aria-label="Underline"
-              title="Underline"
-              className={toolbarBtnClass(activeFormats.underline)}
-            >
-              <Underline className="h-4 w-4" strokeWidth={2} />
-            </button>
+            const premiumMenuTools = TEXT_TOOLS_CATALOG.filter(
+              (t) => isToolEnabled(t.id) && isToolPremium(t.id)
+            );
 
-            <button
-              type="button"
-              onMouseDown={(e) => {
-                e.preventDefault();
-                handleFormat('strikeThrough');
-              }}
-              aria-label="Strikethrough"
-              title="Strikethrough"
-              className={toolbarBtnClass(activeFormats.strikeThrough)}
-            >
-              <Strikethrough className="h-4 w-4" strokeWidth={2} />
-            </button>
+            const renderToolIcon = (id: TextToolId, inMenu = false) => {
+              const cls = inMenu ? 'h-4 w-4 text-[var(--text-secondary)] shrink-0' : 'h-4 w-4';
+              switch (id) {
+                case 'bold':
+                  return <Bold className={cls} strokeWidth={2.2} />;
+                case 'italic':
+                  return <Italic className={cls} strokeWidth={2} />;
+                case 'underline':
+                  return <Underline className={cls} strokeWidth={2} />;
+                case 'strikethrough':
+                  return <Strikethrough className={cls} strokeWidth={2} />;
+                case 'highlight':
+                  return <Highlighter className={cls} strokeWidth={2} />;
+                case 'bullet_list':
+                  return <List className={cls} strokeWidth={2} />;
+                case 'text_size':
+                  return <Heading2 className={cls} strokeWidth={2} />;
+                case 'simple_table':
+                  return <Table2 className={cls} strokeWidth={2} />;
+                case 'insert_link':
+                  return <Link2 className={cls} strokeWidth={2} />;
+                case 'divider':
+                  return <Minus className={cls} strokeWidth={2} />;
+                case 'quick_sketch':
+                  return <PenTool className={cls} strokeWidth={2} />;
+                case 'add_image':
+                  return <ImagePlus className={cls} strokeWidth={2} />;
+                case 'take_photo':
+                  return <Camera className={cls} strokeWidth={2} />;
+                case 'voice_typing':
+                  return isListening ? (
+                    <MicOff className="h-4 w-4 text-[#E45B5B] shrink-0" strokeWidth={2} />
+                  ) : (
+                    <Mic className={cls} strokeWidth={2} />
+                  );
+                case 'translate':
+                  return <Languages className={cls} strokeWidth={2} />;
+                case 'quote':
+                  return <Quote className={cls} strokeWidth={1.85} />;
+                case 'numbered_list':
+                  return <ListOrdered className={cls} strokeWidth={1.85} />;
+                case 'checklist':
+                  return <CheckSquare className={cls} strokeWidth={1.85} />;
+              }
+            };
 
-            <button
-              type="button"
-              onMouseDown={(e) => {
-                e.preventDefault();
-                handleToggleHighlight();
-              }}
-              aria-label="Highlight text"
-              title="Highlight"
-              className={toolbarBtnClass(false)}
-            >
-              <Highlighter className="h-4 w-4" strokeWidth={2} />
-            </button>
+            const triggerMenuTool = (meta: TextToolMeta) => {
+              setInsertMenuOpen(false);
+              runToolAction(meta.id, meta.upgradeTitle, () => {
+                switch (meta.id) {
+                  case 'bold':
+                    restoreSavedRange();
+                    handleFormat('bold');
+                    break;
+                  case 'italic':
+                    restoreSavedRange();
+                    handleFormat('italic');
+                    break;
+                  case 'underline':
+                    restoreSavedRange();
+                    handleFormat('underline');
+                    break;
+                  case 'strikethrough':
+                    restoreSavedRange();
+                    handleFormat('strikeThrough');
+                    break;
+                  case 'highlight':
+                    restoreSavedRange();
+                    handleToggleHighlight();
+                    break;
+                  case 'bullet_list':
+                    restoreSavedRange();
+                    handleFormat('insertUnorderedList');
+                    break;
+                  case 'text_size':
+                    handleOpenTextSizeSlider();
+                    break;
+                  case 'simple_table':
+                    handleOpenTableModal();
+                    break;
+                  case 'insert_link':
+                    handleOpenLinkModal();
+                    break;
+                  case 'divider':
+                    handleInsertDivider();
+                    break;
+                  case 'quick_sketch':
+                    handleOpenSketch();
+                    break;
+                  case 'add_image':
+                    handleImageTrigger('gallery');
+                    break;
+                  case 'take_photo':
+                    handleImageTrigger('camera');
+                    break;
+                  case 'voice_typing':
+                    void handleToggleVoice();
+                    break;
+                  case 'translate':
+                    handleOpenTranslateBar();
+                    break;
+                  case 'quote':
+                    restoreSavedRange();
+                    handleToggleBlockquote();
+                    break;
+                  case 'numbered_list':
+                    restoreSavedRange();
+                    handleFormat('insertOrderedList');
+                    break;
+                  case 'checklist':
+                    restoreSavedRange();
+                    handleInsertChecklist();
+                    break;
+                }
+              });
+            };
 
-            <button
-              type="button"
-              onMouseDown={(e) => {
-                e.preventDefault();
-                handleFormat('insertUnorderedList');
-              }}
-              aria-label="Bullet list"
-              title="Bullet list"
-              className={toolbarBtnClass(activeFormats.unorderedList)}
-            >
-              <List className="h-4 w-4" strokeWidth={2} />
-            </button>
+            return (
+              <>
+                <div className="flex items-center gap-0.5 sm:gap-1 overflow-x-auto no-scrollbar min-w-0">
+                  {isFreeTool('bold') && (
+                    <button
+                      type="button"
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        runToolAction('bold', 'Bold formatting', () => handleFormat('bold'));
+                      }}
+                      aria-label="Bold"
+                      title="Bold"
+                      className={toolbarBtnClass(activeFormats.bold)}
+                    >
+                      <Bold className="h-4 w-4" strokeWidth={2.2} />
+                    </button>
+                  )}
 
-            <div className="mx-1 h-4 w-px bg-[var(--divider)] shrink-0" />
+                  {isFreeTool('italic') && (
+                    <button
+                      type="button"
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        runToolAction('italic', 'Italic formatting', () => handleFormat('italic'));
+                      }}
+                      aria-label="Italic"
+                      title="Italic"
+                      className={toolbarBtnClass(activeFormats.italic)}
+                    >
+                      <Italic className="h-4 w-4" strokeWidth={2} />
+                    </button>
+                  )}
 
-            <button
-              type="button"
-              onPointerDown={(e) => {
-                e.preventDefault();
-                handleOpenTextSizeSlider();
-              }}
-              aria-label="Resize selected text"
-              title="Resize selected text"
-              className={toolbarBtnClass(sizeSliderOpen)}
-            >
-              <Heading2 className="h-4 w-4" strokeWidth={2} />
-            </button>
+                  {isFreeTool('underline') && (
+                    <button
+                      type="button"
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        runToolAction('underline', 'Underline formatting', () =>
+                          handleFormat('underline')
+                        );
+                      }}
+                      aria-label="Underline"
+                      title="Underline"
+                      className={toolbarBtnClass(activeFormats.underline)}
+                    >
+                      <Underline className="h-4 w-4" strokeWidth={2} />
+                    </button>
+                  )}
 
-            <div className="mx-1 h-4 w-px bg-[var(--divider)] shrink-0" />
+                  {isFreeTool('strikethrough') && (
+                    <button
+                      type="button"
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        runToolAction('strikethrough', 'Strikethrough formatting', () =>
+                          handleFormat('strikeThrough')
+                        );
+                      }}
+                      aria-label="Strikethrough"
+                      title="Strikethrough"
+                      className={toolbarBtnClass(activeFormats.strikeThrough)}
+                    >
+                      <Strikethrough className="h-4 w-4" strokeWidth={2} />
+                    </button>
+                  )}
 
-            <button
-              type="button"
-              onMouseDown={() => saveSelection()}
-              onTouchStart={() => saveSelection()}
-              onClick={handleOpenTableModal}
-              aria-label="Simple Table"
-              title="Simple Table"
-              className={toolbarBtnClass(tableModalOpen)}
-            >
-              <Table2 className="h-4 w-4" strokeWidth={2} />
-            </button>
+                  {isFreeTool('highlight') && (
+                    <button
+                      type="button"
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        runToolAction('highlight', 'Text highlight', handleToggleHighlight);
+                      }}
+                      aria-label="Highlight text"
+                      title="Highlight"
+                      className={toolbarBtnClass(false)}
+                    >
+                      <Highlighter className="h-4 w-4" strokeWidth={2} />
+                    </button>
+                  )}
 
-            <button
-              type="button"
-              onMouseDown={() => saveSelection()}
-              onTouchStart={() => saveSelection()}
-              onClick={handleOpenLinkModal}
-              aria-label="Insert Link"
-              title="Insert Link"
-              className={toolbarBtnClass(linkModalOpen)}
-            >
-              <Link2 className="h-4 w-4" strokeWidth={2} />
-            </button>
+                  {isFreeTool('bullet_list') && (
+                    <button
+                      type="button"
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        runToolAction('bullet_list', 'Bullet lists', () =>
+                          handleFormat('insertUnorderedList')
+                        );
+                      }}
+                      aria-label="Bullet list"
+                      title="Bullet list"
+                      className={toolbarBtnClass(activeFormats.unorderedList)}
+                    >
+                      <List className="h-4 w-4" strokeWidth={2} />
+                    </button>
+                  )}
 
-            <button
-              type="button"
-              onMouseDown={(e) => {
-                e.preventDefault();
-                saveSelection();
-                handleInsertDivider();
-              }}
-              aria-label="Divider Line"
-              title="Divider Line"
-              className={toolbarBtnClass(false)}
-            >
-              <Minus className="h-4 w-4" strokeWidth={2} />
-            </button>
+                  {isFreeTool('numbered_list') && (
+                    <button
+                      type="button"
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        runToolAction('numbered_list', 'Numbered lists', () =>
+                          handleFormat('insertOrderedList')
+                        );
+                      }}
+                      aria-label="Numbered list"
+                      title="Numbered List"
+                      className={toolbarBtnClass(activeFormats.orderedList)}
+                    >
+                      <ListOrdered className="h-4 w-4" strokeWidth={2} />
+                    </button>
+                  )}
 
-            <button
-              type="button"
-              onMouseDown={() => saveSelection()}
-              onTouchStart={() => saveSelection()}
-              onClick={handleOpenSketch}
-              aria-label="Quick Sketch"
-              title="Quick Sketch"
-              className={toolbarBtnClass(sketchOpen)}
-            >
-              <PenTool className="h-4 w-4" strokeWidth={2} />
-            </button>
+                  {isFreeTool('quote') && (
+                    <button
+                      type="button"
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        runToolAction('quote', 'Quote blocks', handleToggleBlockquote);
+                      }}
+                      aria-label="Quote"
+                      title="Quote"
+                      className={toolbarBtnClass(false)}
+                    >
+                      <Quote className="h-4 w-4" strokeWidth={2} />
+                    </button>
+                  )}
 
-            <div className="mx-1 h-4 w-px bg-[var(--divider)] shrink-0" />
+                  {isFreeTool('checklist') && (
+                    <button
+                      type="button"
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        runToolAction('checklist', 'Interactive checklists', handleInsertChecklist);
+                      }}
+                      aria-label="Checklist"
+                      title="Checklist"
+                      className={toolbarBtnClass(false)}
+                    >
+                      <CheckSquare className="h-4 w-4" strokeWidth={2} />
+                    </button>
+                  )}
 
-            <button
-              type="button"
-              onMouseDown={() => saveSelection()}
-              onTouchStart={() => saveSelection()}
-              onClick={() => handleImageTrigger('gallery')}
-              aria-label="Add image"
-              title="Add image at cursor"
-              className={toolbarBtnClass(false)}
-            >
-              <ImagePlus className="h-4 w-4" strokeWidth={2} />
-            </button>
+                  {group1Visible && (group2Visible || group3Visible || group4Visible) && (
+                    <div className="mx-1 h-4 w-px bg-[var(--divider)] shrink-0" />
+                  )}
 
-            <button
-              type="button"
-              onMouseDown={() => saveSelection()}
-              onTouchStart={() => saveSelection()}
-              onClick={() => handleImageTrigger('camera')}
-              aria-label="Take photo"
-              title="Take photo at cursor"
-              className={toolbarBtnClass(false)}
-            >
-              <Camera className="h-4 w-4" strokeWidth={2} />
-            </button>
+                  {isFreeTool('text_size') && (
+                    <button
+                      type="button"
+                      onPointerDown={(e) => {
+                        e.preventDefault();
+                        runToolAction('text_size', 'Text resizing', handleOpenTextSizeSlider);
+                      }}
+                      aria-label="Resize selected text"
+                      title="Resize selected text"
+                      className={toolbarBtnClass(sizeSliderOpen)}
+                    >
+                      <Heading2 className="h-4 w-4" strokeWidth={2} />
+                    </button>
+                  )}
 
-            <button
-              type="button"
-              onMouseDown={() => saveSelection()}
-              onTouchStart={() => saveSelection()}
-              onClick={() => handleToggleVoice()}
-              aria-label={isListening ? 'Stop voice typing' : 'Voice typing'}
-              title={isListening ? 'Stop listening' : `Voice typing (${speechLang === 'bn-BD' ? 'বাংলা' : 'EN'})`}
-              className={toolbarBtnClass(isListening)}
-            >
-              {isListening ? (
-                <MicOff className="h-4 w-4 text-[#E45B5B]" strokeWidth={2} />
-              ) : (
-                <Mic className="h-4 w-4" strokeWidth={2} />
-              )}
-            </button>
+                  {group2Visible && (group3Visible || group4Visible) && (
+                    <div className="mx-1 h-4 w-px bg-[var(--divider)] shrink-0" />
+                  )}
 
-            <button
-              type="button"
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => handleSwitchVoiceLanguage(speechLang === 'bn-BD' ? 'en-US' : 'bn-BD')}
-              aria-label="Switch voice language"
-              title="Switch voice language"
-              className="h-9 px-2 rounded-xl flex items-center justify-center text-[11px] font-semibold text-[var(--accent-primary)] hover:bg-[var(--bg-subtle)] shrink-0 cursor-pointer"
-            >
-              {speechLang === 'bn-BD' ? 'বাংলা' : 'EN'}
-            </button>
+                  {isFreeTool('simple_table') && (
+                    <button
+                      type="button"
+                      onMouseDown={() => saveSelection()}
+                      onTouchStart={() => saveSelection()}
+                      onClick={() =>
+                        runToolAction('simple_table', 'Simple tables', handleOpenTableModal)
+                      }
+                      aria-label="Simple Table"
+                      title="Simple Table"
+                      className={toolbarBtnClass(tableModalOpen)}
+                    >
+                      <Table2 className="h-4 w-4" strokeWidth={2} />
+                    </button>
+                  )}
 
-            <button
-              type="button"
-              onPointerDown={(e) => {
-                e.preventDefault();
-                handleOpenTranslateBar();
-              }}
-              aria-label="Translate selected text"
-              title="Translate selected text"
-              className={toolbarBtnClass(translateOpen)}
-            >
-              <Languages className="h-4 w-4" strokeWidth={2} />
-            </button>
-          </div>
+                  {isFreeTool('insert_link') && (
+                    <button
+                      type="button"
+                      onMouseDown={() => saveSelection()}
+                      onTouchStart={() => saveSelection()}
+                      onClick={() =>
+                        runToolAction('insert_link', 'Link insertion', handleOpenLinkModal)
+                      }
+                      aria-label="Insert Link"
+                      title="Insert Link"
+                      className={toolbarBtnClass(linkModalOpen)}
+                    >
+                      <Link2 className="h-4 w-4" strokeWidth={2} />
+                    </button>
+                  )}
 
-          <div className="flex items-center gap-0.5 sm:gap-1 shrink-0">
-            {/* + Premium Text Tools Menu */}
-            <div className="relative" ref={insertMenuRef}>
-              <button
-                type="button"
-                onMouseDown={() => saveSelection()}
-                onTouchStart={() => saveSelection()}
-                onClick={() => setInsertMenuOpen((v) => !v)}
-                aria-label="Premium text tools"
-                title="Premium text tools"
-                className={toolbarBtnClass(insertMenuOpen)}
-              >
-                <Plus className="h-4 w-4" strokeWidth={2.2} />
-              </button>
+                  {isFreeTool('divider') && (
+                    <button
+                      type="button"
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        saveSelection();
+                        runToolAction('divider', 'Divider lines', handleInsertDivider);
+                      }}
+                      aria-label="Divider Line"
+                      title="Divider Line"
+                      className={toolbarBtnClass(false)}
+                    >
+                      <Minus className="h-4 w-4" strokeWidth={2} />
+                    </button>
+                  )}
 
-              {insertMenuOpen && (
-                <div className="absolute right-0 bottom-full mb-2 w-56 rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] py-1.5 z-40 shadow-lg">
+                  {isFreeTool('quick_sketch') && (
+                    <button
+                      type="button"
+                      onMouseDown={() => saveSelection()}
+                      onTouchStart={() => saveSelection()}
+                      onClick={() =>
+                        runToolAction('quick_sketch', 'Quick Sketch', handleOpenSketch)
+                      }
+                      aria-label="Quick Sketch"
+                      title="Quick Sketch"
+                      className={toolbarBtnClass(sketchOpen)}
+                    >
+                      <PenTool className="h-4 w-4" strokeWidth={2} />
+                    </button>
+                  )}
+
+                  {group3Visible && group4Visible && (
+                    <div className="mx-1 h-4 w-px bg-[var(--divider)] shrink-0" />
+                  )}
+
+                  {isFreeTool('add_image') && (
+                    <button
+                      type="button"
+                      onMouseDown={() => saveSelection()}
+                      onTouchStart={() => saveSelection()}
+                      onClick={() =>
+                        runToolAction('add_image', 'Gallery images', () =>
+                          handleImageTrigger('gallery')
+                        )
+                      }
+                      aria-label="Add image"
+                      title="Add image at cursor"
+                      className={toolbarBtnClass(false)}
+                    >
+                      <ImagePlus className="h-4 w-4" strokeWidth={2} />
+                    </button>
+                  )}
+
+                  {isFreeTool('take_photo') && (
+                    <button
+                      type="button"
+                      onMouseDown={() => saveSelection()}
+                      onTouchStart={() => saveSelection()}
+                      onClick={() =>
+                        runToolAction('take_photo', 'Camera photos', () =>
+                          handleImageTrigger('camera')
+                        )
+                      }
+                      aria-label="Take photo"
+                      title="Take photo at cursor"
+                      className={toolbarBtnClass(false)}
+                    >
+                      <Camera className="h-4 w-4" strokeWidth={2} />
+                    </button>
+                  )}
+
+                  {isFreeTool('voice_typing') && (
+                    <>
+                      <button
+                        type="button"
+                        onMouseDown={() => saveSelection()}
+                        onTouchStart={() => saveSelection()}
+                        onClick={() =>
+                          runToolAction('voice_typing', 'Voice typing', () => handleToggleVoice())
+                        }
+                        aria-label={isListening ? 'Stop voice typing' : 'Voice typing'}
+                        title={
+                          isListening
+                            ? 'Stop listening'
+                            : `Voice typing (${speechLang === 'bn-BD' ? 'বাংলা' : 'EN'})`
+                        }
+                        className={toolbarBtnClass(isListening)}
+                      >
+                        {isListening ? (
+                          <MicOff className="h-4 w-4 text-[#E45B5B]" strokeWidth={2} />
+                        ) : (
+                          <Mic className="h-4 w-4" strokeWidth={2} />
+                        )}
+                      </button>
+
+                      <button
+                        type="button"
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() =>
+                          handleSwitchVoiceLanguage(speechLang === 'bn-BD' ? 'en-US' : 'bn-BD')
+                        }
+                        aria-label="Switch voice language"
+                        title="Switch voice language"
+                        className="h-9 px-2 rounded-xl flex items-center justify-center text-[11px] font-semibold text-[var(--accent-primary)] hover:bg-[var(--bg-subtle)] shrink-0 cursor-pointer"
+                      >
+                        {speechLang === 'bn-BD' ? 'বাংলা' : 'EN'}
+                      </button>
+                    </>
+                  )}
+
+                  {isFreeTool('translate') && (
+                    <button
+                      type="button"
+                      onPointerDown={(e) => {
+                        e.preventDefault();
+                        runToolAction('translate', 'Text translation', handleOpenTranslateBar);
+                      }}
+                      aria-label="Translate selected text"
+                      title="Translate selected text"
+                      className={toolbarBtnClass(translateOpen)}
+                    >
+                      <Languages className="h-4 w-4" strokeWidth={2} />
+                    </button>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-0.5 sm:gap-1 shrink-0">
+                  {/* + Premium Text Tools Menu (only rendered when at least 1 enabled tool is Premium) */}
+                  {premiumMenuTools.length > 0 && (
+                    <div className="relative" ref={insertMenuRef}>
+                      <button
+                        type="button"
+                        onMouseDown={() => saveSelection()}
+                        onTouchStart={() => saveSelection()}
+                        onClick={() => setInsertMenuOpen((v) => !v)}
+                        aria-label="Premium text tools"
+                        title="Premium text tools"
+                        className={toolbarBtnClass(insertMenuOpen)}
+                      >
+                        <Plus className="h-4 w-4" strokeWidth={2.2} />
+                      </button>
+
+                      {insertMenuOpen && (
+                        <div className="absolute right-0 bottom-full mb-2 w-60 max-h-72 overflow-y-auto rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] py-1.5 z-40 shadow-lg">
+                          {premiumMenuTools.map((meta) => {
+                            const useClickTrigger =
+                              meta.id === 'simple_table' ||
+                              meta.id === 'insert_link' ||
+                              meta.id === 'quick_sketch' ||
+                              meta.id === 'add_image' ||
+                              meta.id === 'take_photo' ||
+                              meta.id === 'voice_typing';
+
+                            return (
+                              <div
+                                key={meta.id}
+                                className="flex items-center justify-between gap-1 px-1"
+                              >
+                                <button
+                                  type="button"
+                                  onMouseDown={(e) => {
+                                    if (!useClickTrigger) {
+                                      e.preventDefault();
+                                      triggerMenuTool(meta);
+                                    }
+                                  }}
+                                  onClick={() => {
+                                    if (useClickTrigger) {
+                                      triggerMenuTool(meta);
+                                    }
+                                  }}
+                                  className="flex flex-1 min-h-[42px] items-center justify-between gap-2.5 rounded-xl px-2.5 text-sm text-[var(--text-primary)] hover:bg-[var(--bg-subtle)] cursor-pointer"
+                                >
+                                  <span className="flex items-center gap-2.5 min-w-0">
+                                    {renderToolIcon(meta.id, true)}
+                                    <span className="truncate">{meta.label}</span>
+                                  </span>
+                                  {!isPremium && (
+                                    <Lock className="h-3.5 w-3.5 text-[var(--accent-primary)] shrink-0" />
+                                  )}
+                                </button>
+
+                                {meta.id === 'voice_typing' && isPremium && (
+                                  <button
+                                    type="button"
+                                    onMouseDown={(e) => e.preventDefault()}
+                                    onClick={() =>
+                                      handleSwitchVoiceLanguage(
+                                        speechLang === 'bn-BD' ? 'en-US' : 'bn-BD'
+                                      )
+                                    }
+                                    className="mr-1.5 px-2 py-1 rounded-lg bg-[var(--bg-subtle)] text-[11px] font-semibold text-[var(--accent-primary)] shrink-0 cursor-pointer"
+                                  >
+                                    {speechLang === 'bn-BD' ? 'বাংলা' : 'EN'}
+                                  </button>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   <button
                     type="button"
                     onMouseDown={(e) => {
                       e.preventDefault();
-                      setInsertMenuOpen(false);
-                      handlePremiumFormat('Quote blocks', handleToggleBlockquote);
+                      handleUndo();
                     }}
-                    className="flex w-full min-h-[42px] items-center justify-between gap-2.5 px-3.5 text-sm text-[var(--text-primary)] hover:bg-[var(--bg-subtle)] cursor-pointer"
+                    disabled={!canUndo}
+                    aria-label="Undo"
+                    title="Undo"
+                    className={toolbarBtnClass(false, !canUndo)}
                   >
-                    <span className="flex items-center gap-2.5">
-                      <Quote className="h-4 w-4 text-[var(--text-secondary)]" strokeWidth={1.85} />
-                      Quote
-                    </span>
-                    {!isPremium && (
-                      <Lock className="h-3.5 w-3.5 text-[var(--accent-primary)] shrink-0" />
-                    )}
+                    <Undo2 className="h-4 w-4" strokeWidth={2} />
                   </button>
 
                   <button
                     type="button"
                     onMouseDown={(e) => {
                       e.preventDefault();
-                      setInsertMenuOpen(false);
-                      handlePremiumFormat('Numbered lists', () => handleFormat('insertOrderedList'));
+                      handleRedo();
                     }}
-                    className="flex w-full min-h-[42px] items-center justify-between gap-2.5 px-3.5 text-sm text-[var(--text-primary)] hover:bg-[var(--bg-subtle)] cursor-pointer"
+                    disabled={!canRedo}
+                    aria-label="Redo"
+                    title="Redo"
+                    className={toolbarBtnClass(false, !canRedo)}
                   >
-                    <span className="flex items-center gap-2.5">
-                      <ListOrdered className="h-4 w-4 text-[var(--text-secondary)]" strokeWidth={1.85} />
-                      Numbered List
-                    </span>
-                    {!isPremium && (
-                      <Lock className="h-3.5 w-3.5 text-[var(--accent-primary)] shrink-0" />
-                    )}
-                  </button>
-
-                  <button
-                    type="button"
-                    onMouseDown={(e) => {
-                      e.preventDefault();
-                      setInsertMenuOpen(false);
-                      handlePremiumFormat('Interactive checklists', handleInsertChecklist);
-                    }}
-                    className="flex w-full min-h-[42px] items-center justify-between gap-2.5 px-3.5 text-sm text-[var(--text-primary)] hover:bg-[var(--bg-subtle)] cursor-pointer"
-                  >
-                    <span className="flex items-center gap-2.5">
-                      <CheckSquare className="h-4 w-4 text-[var(--text-secondary)]" strokeWidth={1.85} />
-                      Checklist
-                    </span>
-                    {!isPremium && (
-                      <Lock className="h-3.5 w-3.5 text-[var(--accent-primary)] shrink-0" />
-                    )}
+                    <Redo2 className="h-4 w-4" strokeWidth={2} />
                   </button>
                 </div>
-              )}
-            </div>
-
-            <button
-              type="button"
-              onMouseDown={(e) => {
-                e.preventDefault();
-                handleUndo();
-              }}
-              disabled={!canUndo}
-              aria-label="Undo"
-              title="Undo"
-              className={toolbarBtnClass(false, !canUndo)}
-            >
-              <Undo2 className="h-4 w-4" strokeWidth={2} />
-            </button>
-
-            <button
-              type="button"
-              onMouseDown={(e) => {
-                e.preventDefault();
-                handleRedo();
-              }}
-              disabled={!canRedo}
-              aria-label="Redo"
-              title="Redo"
-              className={toolbarBtnClass(false, !canRedo)}
-            >
-              <Redo2 className="h-4 w-4" strokeWidth={2} />
-            </button>
-          </div>
+              </>
+            );
+          })()}
         </div>
       </div>
 

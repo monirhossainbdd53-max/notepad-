@@ -147,3 +147,34 @@ export interface AboutAppConfig {
   updatedAt: string;
   updatedBy?: string;
 }
+
+export type TextToolId =
+  | 'bold'
+  | 'italic'
+  | 'underline'
+  | 'strikethrough'
+  | 'highlight'
+  | 'bullet_list'
+  | 'text_size'
+  | 'simple_table'
+  | 'insert_link'
+  | 'divider'
+  | 'quick_sketch'
+  | 'add_image'
+  | 'take_photo'
+  | 'voice_typing'
+  | 'translate'
+  | 'quote'
+  | 'numbered_list'
+  | 'checklist';
+
+export interface TextToolRule {
+  enabled: boolean;
+  premium: boolean;
+}
+
+export interface TextToolsConfig {
+  tools: Record<TextToolId, TextToolRule>;
+  updatedAt: string;
+  updatedBy?: string;
+}

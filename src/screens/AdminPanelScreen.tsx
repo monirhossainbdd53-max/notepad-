@@ -12,9 +12,11 @@ import {
   Menu,
   MessageSquare,
   Plus,
+  RotateCcw,
   Send,
   ShieldAlert,
   ShieldCheck,
+  SlidersHorizontal,
   Trash2,
   User,
   Users,
@@ -32,14 +34,20 @@ import {
   subscribeSupportMessages,
 } from '../services/supportService';
 import {
+  buildDefaultToolsMap,
+  TEXT_TOOLS_CATALOG,
+} from '../services/textToolsService';
+import {
   AboutSocialLink,
   AboutTeamMember,
   SocialPlatformId,
   SupportMessage,
+  TextToolId,
+  TextToolRule,
 } from '../types/notes';
 import { formatFullDate, generateId } from '../utils/noteHelpers';
 
-type AdminModule = 'overview' | 'preview-timer' | 'support' | 'about';
+type AdminModule = 'overview' | 'preview-timer' | 'text-tools' | 'support' | 'about';
 type SupportFilter = 'all' | 'open' | 'replied';
 
 export function AdminPanelScreen() {
@@ -55,6 +63,10 @@ export function AdminPanelScreen() {
     aboutSyncError,
     aboutSaving,
     updateAdminAboutConfig,
+    textToolsConfig,
+    textToolsSyncError,
+    textToolsSaving,
+    updateAdminTextToolsConfig,
     goBack,
     showToast,
   } = useNotes();
@@ -80,6 +92,10 @@ export function AdminPanelScreen() {
   const [replyingId, setReplyingId] = useState<string | null>(null);
   const [aboutJustSaved, setAboutJustSaved] = useState(false);
   const [previewJustSaved, setPreviewJustSaved] = useState(false);
+  const [toolsDraft, setToolsDraft] = useState<Record<TextToolId, TextToolRule>>(
+    textToolsConfig.tools
+  );
+  const [toolsJustSaved, setToolsJustSaved] = useState(false);
 
   useEffect(() => {
     setEnabled(previewConfig.enabled);
@@ -94,6 +110,10 @@ export function AdminPanelScreen() {
     setTeamDraft(aboutConfig.team);
     setSocialsDraft(aboutConfig.socials);
   }, [aboutConfig]);
+
+  useEffect(() => {
+    setToolsDraft(textToolsConfig.tools);
+  }, [textToolsConfig]);
 
   useEffect(() => {
     if (!isAdmin) return;
@@ -149,6 +169,7 @@ export function AdminPanelScreen() {
   }> = [
     { id: 'overview', label: 'Overview', icon: LayoutDashboard },
     { id: 'preview-timer', label: 'Preview Timer', icon: Clock },
+    { id: 'text-tools', label: 'Text Tools', icon: SlidersHorizontal },
     {
       id: 'support',
       label: 'Support Messages',
@@ -293,9 +314,38 @@ export function AdminPanelScreen() {
     }
   };
 
+  const handleSaveTextTools = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setToolsJustSaved(false);
+    const ok = await updateAdminTextToolsConfig(toolsDraft);
+    if (ok) {
+      setToolsJustSaved(true);
+      setTimeout(() => setToolsJustSaved(false), 4000);
+    }
+  };
+
+  const toolCounts = useMemo(() => {
+    let free = 0;
+    let premium = 0;
+    let hidden = 0;
+    for (const item of TEXT_TOOLS_CATALOG) {
+      const rule = toolsDraft[item.id];
+      if (!rule?.enabled) {
+        hidden += 1;
+      } else if (rule.premium) {
+        premium += 1;
+      } else {
+        free += 1;
+      }
+    }
+    return { free, premium, hidden };
+  }, [toolsDraft]);
+
   const headerTitle =
     activeModule === 'overview'
       ? 'Overview'
+      : activeModule === 'text-tools'
+      ? 'Text Tools'
       : activeModule === 'support'
       ? 'Support Messages'
       : activeModule === 'about'
@@ -479,6 +529,24 @@ export function AdminPanelScreen() {
                 </button>
               </div>
 
+              <div className="rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] p-5 flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-xs font-medium text-[var(--text-secondary)]">
+                    Editor Text Tools
+                  </p>
+                  <p className="mt-1 text-lg font-bold tabular-nums">
+                    {toolCounts.free} free · {toolCounts.premium} premium · {toolCounts.hidden} off
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setActiveModule('text-tools')}
+                  className="min-h-[40px] rounded-xl bg-[var(--bg-subtle)] px-4 text-xs font-semibold text-[var(--text-primary)] cursor-pointer"
+                >
+                  Manage
+                </button>
+              </div>
+
               <button
                 type="button"
                 onClick={() => setActiveModule('preview-timer')}
@@ -487,6 +555,155 @@ export function AdminPanelScreen() {
                 Configure Preview Timer
               </button>
             </div>
+          ) : activeModule === 'text-tools' ? (
+            <form onSubmit={handleSaveTextTools} className="space-y-5">
+              <div className="rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] p-5 space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold">Editor Text Tools</p>
+                    <p className="mt-0.5 text-xs text-[var(--text-secondary)] tabular-nums">
+                      {toolCounts.free} Free (Toolbar) · {toolCounts.premium} Premium (+ Menu) · {toolCounts.hidden} Off
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setToolsDraft(buildDefaultToolsMap())}
+                    className="inline-flex min-h-[36px] items-center gap-1.5 rounded-xl bg-[var(--bg-subtle)] px-3 text-xs font-semibold text-[var(--text-primary)] hover:opacity-85 cursor-pointer"
+                  >
+                    <RotateCcw className="h-3.5 w-3.5" strokeWidth={2} />
+                    Reset Defaults
+                  </button>
+                </div>
+
+                <div className="divide-y divide-[var(--divider)]">
+                  {TEXT_TOOLS_CATALOG.map((tool) => {
+                    const rule = toolsDraft[tool.id] || {
+                      enabled: tool.defaultEnabled,
+                      premium: tool.defaultPremium,
+                    };
+                    return (
+                      <div
+                        key={tool.id}
+                        className="py-3 first:pt-1 last:pb-1 flex flex-wrap items-center justify-between gap-3"
+                      >
+                        <div className="min-w-0">
+                          <p
+                            className={`text-sm font-medium ${
+                              rule.enabled
+                                ? 'text-[var(--text-primary)]'
+                                : 'text-[var(--text-secondary)] line-through opacity-65'
+                            }`}
+                          >
+                            {tool.label}
+                          </p>
+                          <p className="text-[11px] text-[var(--text-secondary)] mt-0.5">
+                            {!rule.enabled
+                              ? 'Disabled'
+                              : rule.premium
+                              ? 'Premium (+ Menu)'
+                              : 'Free (Toolbar)'}
+                          </p>
+                        </div>
+
+                        <div className="flex items-center gap-2.5 shrink-0">
+                          <div className="flex items-center rounded-xl bg-[var(--bg-canvas)] border border-[var(--divider)] p-0.5">
+                            <button
+                              type="button"
+                              disabled={!rule.enabled}
+                              onClick={() =>
+                                setToolsDraft((prev) => ({
+                                  ...prev,
+                                  [tool.id]: { ...rule, premium: false },
+                                }))
+                              }
+                              className={`min-h-[30px] rounded-lg px-2.5 text-xs font-semibold transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${
+                                !rule.premium && rule.enabled
+                                  ? 'bg-[var(--text-primary)] dark:bg-[var(--accent-primary)] text-[var(--bg-card)] dark:text-[#171717]'
+                                  : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+                              }`}
+                            >
+                              Free
+                            </button>
+                            <button
+                              type="button"
+                              disabled={!rule.enabled}
+                              onClick={() =>
+                                setToolsDraft((prev) => ({
+                                  ...prev,
+                                  [tool.id]: { ...rule, premium: true },
+                                }))
+                              }
+                              className={`min-h-[30px] rounded-lg px-2.5 text-xs font-semibold transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${
+                                rule.premium && rule.enabled
+                                  ? 'bg-[var(--accent-primary)] text-white dark:text-[#171717]'
+                                  : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+                              }`}
+                            >
+                              Premium
+                            </button>
+                          </div>
+
+                          <button
+                            type="button"
+                            role="switch"
+                            aria-checked={rule.enabled}
+                            aria-label={`Toggle ${tool.label}`}
+                            onClick={() =>
+                              setToolsDraft((prev) => ({
+                                ...prev,
+                                [tool.id]: { ...rule, enabled: !rule.enabled },
+                              }))
+                            }
+                            className={`relative h-6 w-11 shrink-0 rounded-full transition-colors cursor-pointer ${
+                              rule.enabled ? 'bg-[var(--accent-primary)]' : 'bg-[var(--divider)]'
+                            }`}
+                          >
+                            <span
+                              className={`absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white transition-transform ${
+                                rule.enabled ? 'translate-x-5' : 'translate-x-0'
+                              }`}
+                            />
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {textToolsSyncError && (
+                <div className="rounded-2xl bg-[#E45B5B]/10 border border-[#E45B5B]/30 p-4 text-xs text-[#E45B5B]">
+                  {textToolsSyncError}
+                </div>
+              )}
+
+              {toolsJustSaved && !textToolsSyncError && (
+                <div className="flex items-center gap-2 rounded-2xl bg-[#2E7D32]/12 border border-[#2E7D32]/30 p-3.5 text-xs font-semibold text-[#2E7D32] dark:text-[#81C995]">
+                  <CheckCircle2 className="h-4 w-4 shrink-0" />
+                  Saved — Text Tools updated in real time
+                </div>
+              )}
+
+              <button
+                type="submit"
+                disabled={textToolsSaving}
+                className="flex w-full min-h-[48px] items-center justify-center gap-2 rounded-xl bg-[var(--text-primary)] dark:bg-[var(--accent-primary)] text-sm font-semibold text-[var(--bg-card)] dark:text-[#171717] disabled:opacity-60 transition-opacity hover:opacity-90 cursor-pointer"
+              >
+                {textToolsSaving ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Saving...
+                  </>
+                ) : toolsJustSaved ? (
+                  <>
+                    <CheckCircle2 className="h-4 w-4" />
+                    Saved
+                  </>
+                ) : (
+                  'Save Text Tools'
+                )}
+              </button>
+            </form>
           ) : activeModule === 'support' ? (
             <div className="space-y-4">
               <div className="flex items-center gap-2">

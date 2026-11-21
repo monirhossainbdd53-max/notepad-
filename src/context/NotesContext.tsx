@@ -20,6 +20,9 @@ import {
   NotificationSettings,
   PreviewModeConfig,
   ScreenName,
+  TextToolId,
+  TextToolRule,
+  TextToolsConfig,
   ThemePalette,
   ThemePreference,
   ToastMessage,
@@ -53,6 +56,12 @@ import {
   saveAboutAppConfig,
   subscribeAboutAppConfig,
 } from '../services/aboutAppService';
+import {
+  DEFAULT_TEXT_TOOLS_CONFIG,
+  loadCachedTextToolsConfig,
+  saveTextToolsConfig,
+  subscribeTextToolsConfig,
+} from '../services/textToolsService';
 
 const STORAGE_KEY = 'notes_app_state_v2';
 
@@ -133,6 +142,13 @@ interface NotesContextValue {
   aboutSaving: boolean;
   updateAdminAboutConfig: (
     next: Pick<AboutAppConfig, 'ceo' | 'team' | 'socials'>
+  ) => Promise<boolean>;
+  textToolsConfig: TextToolsConfig;
+  textToolsSyncState: FirestoreSyncState;
+  textToolsSyncError: string | null;
+  textToolsSaving: boolean;
+  updateAdminTextToolsConfig: (
+    nextTools: Record<TextToolId, TextToolRule>
   ) => Promise<boolean>;
   canCreateNote: boolean;
   canCreateFolder: boolean;
@@ -364,6 +380,12 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   const [aboutSyncState, setAboutSyncState] = useState<FirestoreSyncState>('loading');
   const [aboutSyncError, setAboutSyncError] = useState<string | null>(null);
   const [aboutSaving, setAboutSaving] = useState(false);
+  const [textToolsConfig, setTextToolsConfig] = useState<TextToolsConfig>(() =>
+    loadCachedTextToolsConfig()
+  );
+  const [textToolsSyncState, setTextToolsSyncState] = useState<FirestoreSyncState>('loading');
+  const [textToolsSyncError, setTextToolsSyncError] = useState<string | null>(null);
+  const [textToolsSaving, setTextToolsSaving] = useState(false);
   const [nowMs, setNowMs] = useState<number>(() => Date.now());
   const [adminSaving, setAdminSaving] = useState(false);
   const [authLoading, setAuthLoading] = useState(false);
@@ -495,6 +517,15 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       setAboutConfig(config);
       setAboutSyncState(syncState);
       setAboutSyncError(errMsg || null);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    const unsubscribe = subscribeTextToolsConfig((config, syncState, errMsg) => {
+      setTextToolsConfig(config || DEFAULT_TEXT_TOOLS_CONFIG);
+      setTextToolsSyncState(syncState);
+      setTextToolsSyncError(errMsg || null);
     });
     return () => unsubscribe();
   }, []);
@@ -1144,6 +1175,32 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     [isAdmin, showToast]
   );
 
+  const updateAdminTextToolsConfig = useCallback(
+    async (nextTools: Record<TextToolId, TextToolRule>): Promise<boolean> => {
+      if (!isAdmin) {
+        showToast('Admin access required', 'danger');
+        return false;
+      }
+      setTextToolsSaving(true);
+      try {
+        const saved = await saveTextToolsConfig(nextTools);
+        setTextToolsConfig(saved);
+        setTextToolsSyncState('synced');
+        setTextToolsSyncError(null);
+        showToast('Text Tools updated');
+        return true;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Could not save Text Tools settings';
+        setTextToolsSyncError(msg);
+        showToast(msg, 'danger');
+        return false;
+      } finally {
+        setTextToolsSaving(false);
+      }
+    },
+    [isAdmin, showToast]
+  );
+
   const setNotePin = useCallback(
     (pin: string | null) => {
       setNotePinState(pin);
@@ -1595,6 +1652,11 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     aboutSyncError,
     aboutSaving,
     updateAdminAboutConfig,
+    textToolsConfig,
+    textToolsSyncState,
+    textToolsSyncError,
+    textToolsSaving,
+    updateAdminTextToolsConfig,
     canCreateNote,
     canCreateFolder,
     maxImagesAllowed,
