@@ -23,7 +23,7 @@ export function NoteCard({
   onPermanentDelete,
   swipeable,
 }: NoteCardProps) {
-  const { archiveNote, deleteNote } = useNotes();
+  const { archiveNote, deleteNote, noteLockMethod, biometryLabel } = useNotes();
   const [imgError, setImgError] = useState(false);
 
   const canSwipe = swipeable ?? (!onRestore && !onPermanentDelete);
@@ -138,7 +138,11 @@ export function NoteCard({
 
   const titleText = note.title.trim() || 'Untitled Note';
   const isLocked = Boolean(note.isLocked);
-  const preview = isLocked ? 'Locked note · Enter PIN to view' : getNotePreview(note.content, 125);
+  const preview = isLocked
+    ? noteLockMethod === 'fingerprint'
+      ? `Locked note · Use ${biometryLabel.toLowerCase()} to view`
+      : 'Locked note · Enter PIN to view'
+    : getNotePreview(note.content, 125);
   const dateText = formatNoteDate(note.updatedAt);
   const allImages = !isLocked ? extractNoteImages(note.content, note.images) : [];
   const firstImage = allImages[0] || null;

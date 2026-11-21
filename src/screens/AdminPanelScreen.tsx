@@ -1,9 +1,11 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowDown,
   ArrowUp,
+  Calendar,
   CheckCircle2,
   ChevronLeft,
+  ChevronRight,
   Clock,
   Crown,
   Gauge,
@@ -25,7 +27,7 @@ import {
   Users,
   X,
 } from 'lucide-react';
-import { useNotes } from '../context/NotesContext';
+import { useBackHandler, useNotes } from '../context/NotesContext';
 import {
   compressTeamPhotoFile,
   SOCIAL_PLATFORM_OPTIONS,
@@ -64,6 +66,93 @@ type AdminModule =
   | 'about';
 type SupportFilter = 'all' | 'open' | 'replied';
 
+function toLocalDateInputValue(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function toLocalTimeInputValue(date: Date): string {
+  const hours = String(date.getHours()).padStart(2, '0');
+  const minutes = String(date.getMinutes()).padStart(2, '0');
+  return `${hours}:${minutes}`;
+}
+
+function parseLocalDateTime(dateStr: string, timeStr: string): Date | null {
+  const dateMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateStr.trim());
+  const timeMatch = /^(\d{2}):(\d{2})/.exec(timeStr.trim());
+  if (!dateMatch || !timeMatch) return null;
+  const year = Number(dateMatch[1]);
+  const month = Number(dateMatch[2]);
+  const day = Number(dateMatch[3]);
+  const hour = Number(timeMatch[1]);
+  const minute = Number(timeMatch[2]);
+  const dt = new Date(year, month - 1, day, hour, minute, 0, 0);
+  if (
+    dt.getFullYear() !== year ||
+    dt.getMonth() !== month - 1 ||
+    dt.getDate() !== day ||
+    dt.getHours() !== hour ||
+    dt.getMinutes() !== minute
+  ) {
+    return null;
+  }
+  return dt;
+}
+
+function resolvePreviewTargetDate(config: {
+  expiresAt?: string;
+  days: number;
+  hours: number;
+  minutes: number;
+  seconds: number;
+}): Date {
+  if (config.expiresAt) {
+    const parsed = new Date(config.expiresAt);
+    if (Number.isFinite(parsed.getTime())) {
+      return parsed;
+    }
+  }
+  const durationMs = getPreviewDurationMs({
+    enabled: true,
+    days: config.days,
+    hours: config.hours,
+    minutes: config.minutes,
+    seconds: config.seconds,
+    updatedAt: '',
+  });
+  return new Date(Date.now() + (durationMs > 0 ? durationMs : 7 * 86400 * 1000));
+}
+
+function formatCalendarTimeDisplay(date: Date): string {
+  try {
+    return new Intl.DateTimeFormat(undefined, {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+    }).format(date);
+  } catch {
+    return date.toLocaleString();
+  }
+}
+
+function formatRemainingTime(targetMs: number, nowMs: number): string {
+  const diffMs = targetMs - nowMs;
+  if (diffMs <= 0) return 'Expired';
+  const totalMinutes = Math.floor(diffMs / 60000);
+  const d = Math.floor(totalMinutes / 1440);
+  const h = Math.floor((totalMinutes % 1440) / 60);
+  const m = totalMinutes % 60;
+  const parts: string[] = [];
+  if (d > 0) parts.push(`${d}d`);
+  if (h > 0) parts.push(`${h}h`);
+  if (m > 0 || parts.length === 0) parts.push(`${m}m`);
+  return `${parts.join(' ')} left`;
+}
+
 export function AdminPanelScreen() {
   const {
     account,
@@ -89,14 +178,19 @@ export function AdminPanelScreen() {
     showToast,
   } = useNotes();
 
-  const [activeModule, setActiveModule] = useState<AdminModule>('preview-timer');
+  const [activeModule, setActiveModule] = useState<AdminModule>('overview');
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   const [enabled, setEnabled] = useState<boolean>(previewConfig.enabled);
-  const [days, setDays] = useState<string>(String(previewConfig.days));
-  const [hours, setHours] = useState<string>(String(previewConfig.hours));
-  const [minutes, setMinutes] = useState<string>(String(previewConfig.minutes));
-  const [seconds, setSeconds] = useState<string>(String(previewConfig.seconds));
+  const [endDate, setEndDate] = useState<string>(() =>
+    toLocalDateInputValue(resolvePreviewTargetDate(previewConfig))
+  );
+  const [endTime, setEndTime] = useState<string>(() =>
+    toLocalTimeInputValue(resolvePreviewTargetDate(previewConfig))
+  );
+  const [clockTick, setClockTick] = useState<number>(() => Date.now());
+  const dateInputRef = useRef<HTMLInputElement | null>(null);
+  const timeInputRef = useRef<HTMLInputElement | null>(null);
 
   const [ceoDraft, setCeoDraft] = useState<AboutTeamMember | null>(aboutConfig.ceo);
   const [teamDraft, setTeamDraft] = useState<AboutTeamMember[]>(aboutConfig.team);
@@ -163,13 +257,21 @@ export function AdminPanelScreen() {
   );
   const [premJustSaved, setPremJustSaved] = useState(false);
 
+  useBackHandler(mobileNavOpen, () => setMobileNavOpen(false));
+
   useEffect(() => {
     setEnabled(previewConfig.enabled);
-    setDays(String(previewConfig.days));
-    setHours(String(previewConfig.hours));
-    setMinutes(String(previewConfig.minutes));
-    setSeconds(String(previewConfig.seconds));
+    const target = resolvePreviewTargetDate(previewConfig);
+    setEndDate(toLocalDateInputValue(target));
+    setEndTime(toLocalTimeInputValue(target));
   }, [previewConfig]);
+
+  useEffect(() => {
+    if (activeModule !== 'preview-timer' && activeModule !== 'overview') return;
+    setClockTick(Date.now());
+    const id = window.setInterval(() => setClockTick(Date.now()), 15000);
+    return () => window.clearInterval(id);
+  }, [activeModule]);
 
   useEffect(() => {
     setCeoDraft(aboutConfig.ceo);
@@ -217,10 +319,32 @@ export function AdminPanelScreen() {
     [supportTickets]
   );
 
+  const repliedTicketCount = useMemo(
+    () => supportTickets.filter((t) => t.status === 'replied').length,
+    [supportTickets]
+  );
+
   const filteredTickets = useMemo(() => {
     if (supportFilter === 'all') return supportTickets;
     return supportTickets.filter((t) => t.status === supportFilter);
   }, [supportFilter, supportTickets]);
+
+  const toolCounts = useMemo(() => {
+    let free = 0;
+    let premium = 0;
+    let hidden = 0;
+    for (const item of TEXT_TOOLS_CATALOG) {
+      const rule = toolsDraft[item.id];
+      if (!rule?.enabled) {
+        hidden += 1;
+      } else if (rule.premium) {
+        premium += 1;
+      } else {
+        free += 1;
+      }
+    }
+    return { free, premium, hidden };
+  }, [toolsDraft]);
 
   if (!isAdmin) {
     return (
@@ -243,30 +367,54 @@ export function AdminPanelScreen() {
     );
   }
 
-  const navItems: Array<{
-    id: AdminModule;
-    label: string;
-    icon: typeof LayoutDashboard;
-    badge?: number;
+  const navGroups: Array<{
+    groupLabel: string;
+    items: Array<{
+      id: AdminModule;
+      label: string;
+      icon: typeof LayoutDashboard;
+      badge?: number;
+    }>;
   }> = [
-    { id: 'overview', label: 'Overview', icon: LayoutDashboard },
-    { id: 'preview-timer', label: 'Preview Timer', icon: Clock },
-    { id: 'text-tools', label: 'Text Tools', icon: SlidersHorizontal },
-    { id: 'free-limits', label: 'Free Limits', icon: Gauge },
-    { id: 'announcement', label: 'Notice Banner', icon: Megaphone },
-    { id: 'premium-controls', label: 'Plans & Pricing', icon: Crown },
     {
-      id: 'support',
-      label: 'Support Messages',
-      icon: MessageSquare,
-      badge: openTicketCount > 0 ? openTicketCount : undefined,
+      groupLabel: 'Dashboard',
+      items: [{ id: 'overview', label: 'Overview', icon: LayoutDashboard }],
     },
-    { id: 'about', label: 'About App', icon: Users },
+    {
+      groupLabel: 'App Controls',
+      items: [
+        { id: 'preview-timer', label: 'Preview Timer', icon: Clock },
+        { id: 'free-limits', label: 'Free Limits', icon: Gauge },
+        { id: 'premium-controls', label: 'Plans & Pricing', icon: Crown },
+        { id: 'text-tools', label: 'Text Tools', icon: SlidersHorizontal },
+      ],
+    },
+    {
+      groupLabel: 'Content & Support',
+      items: [
+        { id: 'announcement', label: 'Notice Banner', icon: Megaphone },
+        {
+          id: 'support',
+          label: 'Support Messages',
+          icon: MessageSquare,
+          badge: openTicketCount > 0 ? openTicketCount : undefined,
+        },
+        { id: 'about', label: 'About App', icon: Users },
+      ],
+    },
   ];
 
   const totalConfiguredMs = getPreviewDurationMs(previewConfig);
+  const savedExpiresAtMs = previewConfig.expiresAt
+    ? new Date(previewConfig.expiresAt).getTime()
+    : 0;
+  const hasSavedEndDateTime =
+    Number.isFinite(savedExpiresAtMs) && savedExpiresAtMs > 0;
 
   const formatDurationSummary = () => {
+    if (hasSavedEndDateTime) {
+      return formatCalendarTimeDisplay(new Date(savedExpiresAtMs));
+    }
     const parts: string[] = [];
     if (previewConfig.days > 0) parts.push(`${previewConfig.days}d`);
     if (previewConfig.hours > 0) parts.push(`${previewConfig.hours}h`);
@@ -275,21 +423,27 @@ export function AdminPanelScreen() {
     return parts.join(' ');
   };
 
-  const parseField = (raw: string, max: number) => {
-    const n = Number(raw);
-    if (!Number.isFinite(n) || n < 0) return 0;
-    return Math.min(max, Math.floor(n));
-  };
+  const draftTargetDate = useMemo(
+    () => parseLocalDateTime(endDate, endTime),
+    [endDate, endTime]
+  );
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     setPreviewJustSaved(false);
+    const target = parseLocalDateTime(endDate, endTime);
+    if (!target) {
+      showToast('Select a valid date and time', 'danger');
+      return;
+    }
+    const remainingSec = Math.max(0, Math.floor((target.getTime() - Date.now()) / 1000));
     const ok = await updateAdminPreviewConfig({
       enabled,
-      days: parseField(days, 3650),
-      hours: parseField(hours, 23),
-      minutes: parseField(minutes, 59),
-      seconds: parseField(seconds, 59),
+      days: Math.min(3650, Math.floor(remainingSec / 86400)),
+      hours: Math.floor((remainingSec % 86400) / 3600),
+      minutes: Math.floor((remainingSec % 3600) / 60),
+      seconds: remainingSec % 60,
+      expiresAt: target.toISOString(),
     });
     if (ok) {
       setPreviewJustSaved(true);
@@ -408,23 +562,6 @@ export function AdminPanelScreen() {
       setTimeout(() => setToolsJustSaved(false), 4000);
     }
   };
-
-  const toolCounts = useMemo(() => {
-    let free = 0;
-    let premium = 0;
-    let hidden = 0;
-    for (const item of TEXT_TOOLS_CATALOG) {
-      const rule = toolsDraft[item.id];
-      if (!rule?.enabled) {
-        hidden += 1;
-      } else if (rule.premium) {
-        premium += 1;
-      } else {
-        free += 1;
-      }
-    }
-    return { free, premium, hidden };
-  }, [toolsDraft]);
 
   const handleSaveFreeLimits = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -555,12 +692,62 @@ export function AdminPanelScreen() {
       ? 'About App'
       : 'Preview Timer';
 
+  const selectModule = (id: AdminModule) => {
+    setActiveModule(id);
+    setMobileNavOpen(false);
+    window.scrollTo({ top: 0, behavior: 'instant' as ScrollBehavior });
+  };
+
+  const renderSidebarNav = () => (
+    <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-5">
+      {navGroups.map((group) => (
+        <div key={group.groupLabel} className="space-y-1">
+          <p className="px-3 pb-1 text-[11px] font-semibold text-[var(--text-secondary)] tracking-wide">
+            {group.groupLabel}
+          </p>
+          {group.items.map((item) => {
+            const Icon = item.icon;
+            const active = activeModule === item.id;
+            return (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => selectModule(item.id)}
+                className={`flex w-full min-h-[42px] items-center justify-between gap-2 rounded-xl px-3 text-sm font-medium transition-colors cursor-pointer whitespace-nowrap ${
+                  active
+                    ? 'bg-[var(--accent-soft)] text-[var(--accent-primary)] font-semibold'
+                    : 'text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)] hover:text-[var(--text-primary)]'
+                }`}
+              >
+                <span className="flex items-center gap-2.5 min-w-0">
+                  <Icon className="h-4 w-4 shrink-0" strokeWidth={1.9} />
+                  <span className="truncate">{item.label}</span>
+                </span>
+                {typeof item.badge === 'number' && (
+                  <span className="text-xs font-bold text-[var(--accent-primary)] tabular-nums shrink-0">
+                    {item.badge}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      ))}
+    </nav>
+  );
+
+  const premiumFeatureSummary = [
+    appControlsConfig.premiumControls.features.themePalettes ? 'Themes: Premium' : 'Themes: Free',
+    appControlsConfig.premiumControls.features.noteLock ? 'Lock: Premium' : 'Lock: Free',
+    appControlsConfig.premiumControls.features.driveBackup ? 'Drive: Premium' : 'Drive: Free',
+  ].join(' · ');
+
   return (
     <div className="min-h-screen bg-[var(--bg-canvas)] text-[var(--text-primary)] flex">
-      {/* Desktop Left Sidebar */}
-      <aside className="hidden md:flex md:w-64 md:flex-col md:border-r md:border-[var(--divider)] bg-[var(--bg-card)] shrink-0">
-        <div className="flex items-center gap-2.5 px-5 py-5 border-b border-[var(--divider)]">
-          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[var(--accent-soft)] text-[var(--accent-primary)]">
+      {/* Desktop Sticky Left Sidebar */}
+      <aside className="hidden md:flex md:sticky md:top-0 md:h-screen md:w-64 md:flex-col md:border-r md:border-[var(--divider)] bg-[var(--bg-card)] shrink-0">
+        <div className="flex items-center gap-3 px-4 py-4 border-b border-[var(--divider)]">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[var(--accent-soft)] text-[var(--accent-primary)]">
             <ShieldCheck className="h-5 w-5" strokeWidth={2} />
           </div>
           <div className="min-w-0">
@@ -569,259 +756,351 @@ export function AdminPanelScreen() {
           </div>
         </div>
 
-        <nav className="flex-1 p-3 space-y-1">
-          {navItems.map((item) => {
-            const Icon = item.icon;
-            const active = activeModule === item.id;
-            return (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => setActiveModule(item.id)}
-                className={`flex w-full min-h-[44px] items-center justify-between gap-2 rounded-xl px-3.5 text-sm font-medium transition-colors cursor-pointer ${
-                  active
-                    ? 'bg-[var(--accent-soft)] text-[var(--accent-primary)] font-semibold'
-                    : 'text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)] hover:text-[var(--text-primary)]'
-                }`}
-              >
-                <span className="flex items-center gap-3 min-w-0">
-                  <Icon className="h-4 w-4 shrink-0" strokeWidth={1.9} />
-                  <span className="truncate">{item.label}</span>
-                </span>
-                {typeof item.badge === 'number' && (
-                  <span className="rounded-lg bg-[var(--accent-primary)] px-1.5 py-0.5 text-[11px] font-bold text-white dark:text-[#171717] tabular-nums">
-                    {item.badge}
-                  </span>
-                )}
-              </button>
-            );
-          })}
-        </nav>
+        {renderSidebarNav()}
 
         <div className="p-3 border-t border-[var(--divider)]">
           <button
             type="button"
             onClick={goBack}
-            className="flex w-full min-h-[42px] items-center gap-2.5 rounded-xl px-3.5 text-sm font-medium text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+            className="flex w-full min-h-[42px] items-center gap-2.5 rounded-xl px-3 text-sm font-medium text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)] hover:text-[var(--text-primary)] transition-colors cursor-pointer whitespace-nowrap"
           >
-            <ChevronLeft className="h-4 w-4" strokeWidth={2} />
+            <ChevronLeft className="h-4 w-4 shrink-0" strokeWidth={2} />
             <span>Back to Settings</span>
           </button>
         </div>
       </aside>
 
+      {/* Mobile Slide-Over Drawer */}
+      {mobileNavOpen && (
+        <div
+          className="fixed inset-0 z-40 flex md:hidden"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Admin navigation"
+        >
+          <div
+            className="fixed inset-0 bg-black/45"
+            onClick={() => setMobileNavOpen(false)}
+          />
+          <aside className="relative z-10 flex w-72 max-w-[82vw] flex-col bg-[var(--bg-card)] border-r border-[var(--divider)] h-full">
+            <div className="flex items-center justify-between gap-3 px-4 py-4 border-b border-[var(--divider)]">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[var(--accent-soft)] text-[var(--accent-primary)]">
+                  <ShieldCheck className="h-5 w-5" strokeWidth={2} />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-sm font-bold tracking-tight truncate">Notes Admin</p>
+                  <p className="text-xs text-[var(--text-secondary)] truncate">{account.email}</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setMobileNavOpen(false)}
+                aria-label="Close menu"
+                className="min-h-[40px] min-w-[40px] flex items-center justify-center rounded-xl text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)] cursor-pointer"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            {renderSidebarNav()}
+
+            <div className="p-3 border-t border-[var(--divider)]">
+              <button
+                type="button"
+                onClick={() => {
+                  setMobileNavOpen(false);
+                  goBack();
+                }}
+                className="flex w-full min-h-[44px] items-center gap-2.5 rounded-xl px-3 text-sm font-medium text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)] hover:text-[var(--text-primary)] cursor-pointer"
+              >
+                <ChevronLeft className="h-4 w-4 shrink-0" strokeWidth={2} />
+                <span>Back to Settings</span>
+              </button>
+            </div>
+          </aside>
+        </div>
+      )}
+
       {/* Main Content Area */}
       <div className="flex-1 min-w-0 flex flex-col">
-        <header className="sticky top-0 z-20 bg-[var(--bg-canvas)]/95 backdrop-blur-md border-b border-[var(--divider)] px-4 sm:px-8 py-3.5 flex items-center justify-between gap-3">
+        <header className="sticky top-0 z-20 h-[61px] bg-[var(--bg-canvas)]/95 backdrop-blur-md border-b border-[var(--divider)] px-4 sm:px-8 flex items-center justify-between gap-4">
           <div className="flex items-center gap-2 min-w-0">
             <button
               type="button"
               onClick={goBack}
               aria-label="Back"
-              className="md:hidden min-h-[42px] min-w-[42px] flex items-center justify-center rounded-full text-[var(--text-primary)] hover:bg-[var(--bg-subtle)] cursor-pointer"
+              className="md:hidden min-h-[42px] min-w-[42px] flex items-center justify-center rounded-xl text-[var(--text-primary)] hover:bg-[var(--bg-subtle)] cursor-pointer"
             >
               <ChevronLeft className="h-5 w-5" strokeWidth={2} />
             </button>
-            <h1 className="text-lg sm:text-xl font-bold tracking-tight truncate">
-              {headerTitle}
-            </h1>
-          </div>
 
-          <button
-            type="button"
-            onClick={() => setMobileNavOpen((prev) => !prev)}
-            aria-label="Toggle admin menu"
-            className="md:hidden min-h-[42px] min-w-[42px] flex items-center justify-center rounded-full bg-[var(--bg-card)] border border-[var(--divider)] text-[var(--text-primary)] cursor-pointer"
-          >
-            {mobileNavOpen ? <X className="h-4 w-4" /> : <Menu className="h-4 w-4" />}
-          </button>
-        </header>
-
-        {/* Mobile Module Navigation */}
-        {mobileNavOpen && (
-          <div className="md:hidden border-b border-[var(--divider)] bg-[var(--bg-card)] px-4 py-3 space-y-1">
-            {navItems.map((item) => {
-              const Icon = item.icon;
-              const active = activeModule === item.id;
-              return (
-                <button
-                  key={item.id}
-                  type="button"
-                  onClick={() => {
-                    setActiveModule(item.id);
-                    setMobileNavOpen(false);
-                  }}
-                  className={`flex w-full min-h-[44px] items-center justify-between gap-2 rounded-xl px-3.5 text-sm font-medium transition-colors cursor-pointer ${
-                    active
-                      ? 'bg-[var(--accent-soft)] text-[var(--accent-primary)] font-semibold'
-                      : 'text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)]'
-                  }`}
-                >
-                  <span className="flex items-center gap-3 min-w-0">
-                    <Icon className="h-4 w-4 shrink-0" strokeWidth={1.9} />
-                    <span className="truncate">{item.label}</span>
-                  </span>
-                  {typeof item.badge === 'number' && (
-                    <span className="rounded-lg bg-[var(--accent-primary)] px-1.5 py-0.5 text-[11px] font-bold text-white dark:text-[#171717] tabular-nums">
-                      {item.badge}
-                    </span>
-                  )}
-                </button>
-              );
-            })}
-          </div>
-        )}
-
-        <main className="flex-1 p-5 sm:p-8 max-w-2xl w-full mx-auto">
-          {activeModule === 'overview' ? (
-            <div className="space-y-4">
-              <div className="rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] p-5 space-y-4">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <p className="text-xs font-medium text-[var(--text-secondary)]">
-                      Preview Mode Card
-                    </p>
-                    <p className="mt-1 text-lg font-bold">
-                      {previewConfig.enabled && totalConfiguredMs > 0 ? 'Active' : 'Hidden'}
-                    </p>
-                  </div>
-                  <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[var(--accent-soft)] text-[var(--accent-primary)]">
-                    <Clock className="h-5 w-5" strokeWidth={1.85} />
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-3 pt-2 border-t border-[var(--divider)]">
-                  <div>
-                    <p className="text-xs text-[var(--text-secondary)]">Allowed Duration</p>
-                    <p className="mt-0.5 text-sm font-semibold tabular-nums">
-                      {formatDurationSummary()}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-[var(--text-secondary)]">Sync Status</p>
-                    <p className="mt-0.5 text-sm font-semibold capitalize">{previewSyncState}</p>
-                  </div>
-                </div>
-
-                {previewConfig.updatedAt && (
-                  <p className="text-xs text-[var(--text-secondary)]">
-                    Last updated: {formatFullDate(previewConfig.updatedAt)}
-                  </p>
-                )}
-
-                {previewSyncError && (
-                  <p className="text-xs text-[#E45B5B]">{previewSyncError}</p>
-                )}
-              </div>
-
-              <div className="rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] p-5 flex items-center justify-between gap-3">
-                <div>
-                  <p className="text-xs font-medium text-[var(--text-secondary)]">
-                    Support Inbox
-                  </p>
-                  <p className="mt-1 text-lg font-bold tabular-nums">
-                    {openTicketCount} open · {supportTickets.length} total
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setActiveModule('support')}
-                  className="min-h-[40px] rounded-xl bg-[var(--bg-subtle)] px-4 text-xs font-semibold text-[var(--text-primary)] cursor-pointer"
-                >
-                  Open Inbox
-                </button>
-              </div>
-
-              <div className="rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] p-5 flex items-center justify-between gap-3">
-                <div>
-                  <p className="text-xs font-medium text-[var(--text-secondary)]">
-                    Editor Text Tools
-                  </p>
-                  <p className="mt-1 text-lg font-bold tabular-nums">
-                    {toolCounts.free} free · {toolCounts.premium} premium · {toolCounts.hidden} off
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setActiveModule('text-tools')}
-                  className="min-h-[40px] rounded-xl bg-[var(--bg-subtle)] px-4 text-xs font-semibold text-[var(--text-primary)] cursor-pointer"
-                >
-                  Manage
-                </button>
-              </div>
-
-              <div className="rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] p-5 flex items-center justify-between gap-3">
-                <div>
-                  <p className="text-xs font-medium text-[var(--text-secondary)]">
-                    Free Plan Limits
-                  </p>
-                  <p className="mt-1 text-lg font-bold tabular-nums">
-                    {appControlsConfig.freeLimits.maxActiveNotes} notes ·{' '}
-                    {appControlsConfig.freeLimits.maxFolders} folders ·{' '}
-                    {appControlsConfig.freeLimits.maxImagesPerNote} img
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setActiveModule('free-limits')}
-                  className="min-h-[40px] rounded-xl bg-[var(--bg-subtle)] px-4 text-xs font-semibold text-[var(--text-primary)] cursor-pointer"
-                >
-                  Edit
-                </button>
-              </div>
-
-              <div className="rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] p-5 flex items-center justify-between gap-3">
-                <div className="min-w-0">
-                  <p className="text-xs font-medium text-[var(--text-secondary)]">
-                    Notice Banner
-                  </p>
-                  <p className="mt-1 text-lg font-bold truncate">
-                    {appControlsConfig.announcement.enabled
-                      ? appControlsConfig.announcement.title || 'Active'
-                      : 'Hidden'}
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setActiveModule('announcement')}
-                  className="min-h-[40px] shrink-0 rounded-xl bg-[var(--bg-subtle)] px-4 text-xs font-semibold text-[var(--text-primary)] cursor-pointer"
-                >
-                  Configure
-                </button>
-              </div>
-
-              <div className="rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] p-5 flex items-center justify-between gap-3">
-                <div>
-                  <p className="text-xs font-medium text-[var(--text-secondary)]">
-                    Plans & Pricing
-                  </p>
-                  <p className="mt-1 text-lg font-bold tabular-nums">
-                    ৳{appControlsConfig.premiumControls.pricing.monthlyBdt}/mo · ৳
-                    {appControlsConfig.premiumControls.pricing.yearlyBdt}/yr
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setActiveModule('premium-controls')}
-                  className="min-h-[40px] rounded-xl bg-[var(--bg-subtle)] px-4 text-xs font-semibold text-[var(--text-primary)] cursor-pointer"
-                >
-                  Manage
-                </button>
-              </div>
-
+            <div className="flex items-center gap-2 min-w-0 text-sm">
               <button
                 type="button"
-                onClick={() => setActiveModule('preview-timer')}
-                className="w-full min-h-[48px] rounded-xl bg-[var(--text-primary)] dark:bg-[var(--accent-primary)] text-sm font-semibold text-[var(--bg-card)] dark:text-[#171717] cursor-pointer"
+                onClick={() => selectModule('overview')}
+                className="hidden sm:inline text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors whitespace-nowrap shrink-0 cursor-pointer"
               >
-                Configure Preview Timer
+                Admin
               </button>
+              <ChevronRight className="hidden sm:inline h-3.5 w-3.5 text-[var(--text-secondary)] shrink-0" />
+              <h1 className="text-base sm:text-lg font-bold tracking-tight truncate">
+                {headerTitle}
+              </h1>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2.5 shrink-0">
+            {activeModule !== 'overview' && (
+              <button
+                type="button"
+                onClick={() => selectModule('overview')}
+                className="hidden sm:inline-flex min-h-[38px] items-center rounded-xl border border-[var(--divider)] bg-[var(--bg-card)] px-3.5 text-xs font-semibold text-[var(--text-primary)] hover:bg-[var(--bg-subtle)] transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+              >
+                Overview
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => setMobileNavOpen(true)}
+              aria-label="Open admin menu"
+              className="md:hidden min-h-[42px] min-w-[42px] flex items-center justify-center rounded-xl bg-[var(--bg-card)] border border-[var(--divider)] text-[var(--text-primary)] cursor-pointer"
+            >
+              <Menu className="h-4 w-4" />
+            </button>
+          </div>
+        </header>
+
+        <main className="flex-1 w-full max-w-5xl mx-auto p-5 sm:p-8">
+          {activeModule === 'overview' ? (
+            <div className="space-y-6">
+              {/* Top 2x2 Summary Grid */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <section className="rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] p-5 flex flex-col justify-between gap-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-xs font-medium text-[var(--text-secondary)]">
+                        Preview Timer
+                      </p>
+                      <p className="mt-1 text-xl font-bold tracking-tight tabular-nums">
+                        {!previewConfig.enabled
+                          ? 'Hidden'
+                          : hasSavedEndDateTime
+                          ? savedExpiresAtMs > clockTick
+                            ? formatRemainingTime(savedExpiresAtMs, clockTick)
+                            : 'Expired'
+                          : totalConfiguredMs > 0
+                          ? `Active · ${formatDurationSummary()}`
+                          : 'Hidden'}
+                      </p>
+                      <p className="mt-1 text-xs text-[var(--text-secondary)]">
+                        {hasSavedEndDateTime && previewConfig.enabled
+                          ? `Until ${formatDurationSummary()}`
+                          : (
+                            <>
+                              Sync:{' '}
+                              <span className="capitalize font-medium text-[var(--text-primary)]">
+                                {previewSyncState}
+                              </span>
+                              {previewConfig.updatedAt && ` · ${formatFullDate(previewConfig.updatedAt)}`}
+                            </>
+                          )}
+                      </p>
+                    </div>
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[var(--accent-soft)] text-[var(--accent-primary)]">
+                      <Clock className="h-5 w-5" strokeWidth={1.85} />
+                    </div>
+                  </div>
+                  {previewSyncError && (
+                    <p className="text-xs text-[#E45B5B]">{previewSyncError}</p>
+                  )}
+                  <div className="pt-3 border-t border-[var(--divider)] flex items-center justify-between gap-3">
+                    <span className="text-xs text-[var(--text-secondary)]">Trial access window</span>
+                    <button
+                      type="button"
+                      onClick={() => selectModule('preview-timer')}
+                      className="min-h-[36px] rounded-xl bg-[var(--bg-subtle)] px-3.5 text-xs font-semibold text-[var(--text-primary)] hover:opacity-85 whitespace-nowrap shrink-0 cursor-pointer"
+                    >
+                      Configure
+                    </button>
+                  </div>
+                </section>
+
+                <section className="rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] p-5 flex flex-col justify-between gap-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-xs font-medium text-[var(--text-secondary)]">
+                        Support Inbox
+                      </p>
+                      <p className="mt-1 text-xl font-bold tracking-tight tabular-nums">
+                        {openTicketCount} open · {supportTickets.length} total
+                      </p>
+                      <p className="mt-1 text-xs text-[var(--text-secondary)] tabular-nums">
+                        {repliedTicketCount} replied messages
+                      </p>
+                    </div>
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[var(--accent-soft)] text-[var(--accent-primary)]">
+                      <MessageSquare className="h-5 w-5" strokeWidth={1.85} />
+                    </div>
+                  </div>
+                  <div className="pt-3 border-t border-[var(--divider)] flex items-center justify-between gap-3">
+                    <span className="text-xs text-[var(--text-secondary)]">User tickets & replies</span>
+                    <button
+                      type="button"
+                      onClick={() => selectModule('support')}
+                      className="min-h-[36px] rounded-xl bg-[var(--bg-subtle)] px-3.5 text-xs font-semibold text-[var(--text-primary)] hover:opacity-85 whitespace-nowrap shrink-0 cursor-pointer"
+                    >
+                      Open Inbox
+                    </button>
+                  </div>
+                </section>
+
+                <section className="rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] p-5 flex flex-col justify-between gap-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-xs font-medium text-[var(--text-secondary)]">
+                        Free Plan Limits
+                      </p>
+                      <p className="mt-1 text-xl font-bold tracking-tight tabular-nums">
+                        {appControlsConfig.freeLimits.maxActiveNotes} notes ·{' '}
+                        {appControlsConfig.freeLimits.maxFolders} folders ·{' '}
+                        {appControlsConfig.freeLimits.maxImagesPerNote} img
+                      </p>
+                      <p className="mt-1 text-xs text-[var(--text-secondary)]">
+                        Active quota for Free users
+                      </p>
+                    </div>
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[var(--accent-soft)] text-[var(--accent-primary)]">
+                      <Gauge className="h-5 w-5" strokeWidth={1.85} />
+                    </div>
+                  </div>
+                  <div className="pt-3 border-t border-[var(--divider)] flex items-center justify-between gap-3">
+                    <span className="text-xs text-[var(--text-secondary)]">Notes, folders & image cap</span>
+                    <button
+                      type="button"
+                      onClick={() => selectModule('free-limits')}
+                      className="min-h-[36px] rounded-xl bg-[var(--bg-subtle)] px-3.5 text-xs font-semibold text-[var(--text-primary)] hover:opacity-85 whitespace-nowrap shrink-0 cursor-pointer"
+                    >
+                      Edit Limits
+                    </button>
+                  </div>
+                </section>
+
+                <section className="rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] p-5 flex flex-col justify-between gap-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-xs font-medium text-[var(--text-secondary)]">
+                        Plans & Pricing
+                      </p>
+                      <p className="mt-1 text-xl font-bold tracking-tight tabular-nums">
+                        ৳{appControlsConfig.premiumControls.pricing.monthlyBdt}/mo · ৳
+                        {appControlsConfig.premiumControls.pricing.yearlyBdt}/yr
+                      </p>
+                      <p className="mt-1 text-xs text-[var(--text-secondary)] truncate">
+                        {premiumFeatureSummary}
+                      </p>
+                    </div>
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[var(--accent-soft)] text-[var(--accent-primary)]">
+                      <Crown className="h-5 w-5" strokeWidth={1.85} />
+                    </div>
+                  </div>
+                  <div className="pt-3 border-t border-[var(--divider)] flex items-center justify-between gap-3">
+                    <span className="text-xs text-[var(--text-secondary)]">Feature access & prices</span>
+                    <button
+                      type="button"
+                      onClick={() => selectModule('premium-controls')}
+                      className="min-h-[36px] rounded-xl bg-[var(--bg-subtle)] px-3.5 text-xs font-semibold text-[var(--text-primary)] hover:opacity-85 whitespace-nowrap shrink-0 cursor-pointer"
+                    >
+                      Manage
+                    </button>
+                  </div>
+                </section>
+              </div>
+
+              {/* Secondary Modules List */}
+              <section className="rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] divide-y divide-[var(--divider)]">
+                <div className="p-5 flex items-center justify-between gap-4">
+                  <div className="flex items-center gap-3.5 min-w-0">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[var(--bg-canvas)] border border-[var(--divider)] text-[var(--text-primary)]">
+                      <SlidersHorizontal className="h-4.5 w-4.5" strokeWidth={1.85} />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-[var(--text-primary)]">
+                        Editor Text Tools
+                      </p>
+                      <p className="mt-0.5 text-xs text-[var(--text-secondary)] tabular-nums truncate">
+                        {toolCounts.free} free · {toolCounts.premium} premium · {toolCounts.hidden} off
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => selectModule('text-tools')}
+                    className="min-h-[38px] rounded-xl bg-[var(--bg-subtle)] px-4 text-xs font-semibold text-[var(--text-primary)] hover:opacity-85 whitespace-nowrap shrink-0 cursor-pointer"
+                  >
+                    Manage
+                  </button>
+                </div>
+
+                <div className="p-5 flex items-center justify-between gap-4">
+                  <div className="flex items-center gap-3.5 min-w-0">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[var(--bg-canvas)] border border-[var(--divider)] text-[var(--text-primary)]">
+                      <Megaphone className="h-4.5 w-4.5" strokeWidth={1.85} />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-[var(--text-primary)]">
+                        Notice Banner
+                      </p>
+                      <p className="mt-0.5 text-xs text-[var(--text-secondary)] truncate">
+                        {appControlsConfig.announcement.enabled
+                          ? appControlsConfig.announcement.title || 'Active on Home Screen'
+                          : 'Hidden'}
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => selectModule('announcement')}
+                    className="min-h-[38px] rounded-xl bg-[var(--bg-subtle)] px-4 text-xs font-semibold text-[var(--text-primary)] hover:opacity-85 whitespace-nowrap shrink-0 cursor-pointer"
+                  >
+                    Configure
+                  </button>
+                </div>
+
+                <div className="p-5 flex items-center justify-between gap-4">
+                  <div className="flex items-center gap-3.5 min-w-0">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[var(--bg-canvas)] border border-[var(--divider)] text-[var(--text-primary)]">
+                      <Users className="h-4.5 w-4.5" strokeWidth={1.85} />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-[var(--text-primary)]">
+                        About App
+                      </p>
+                      <p className="mt-0.5 text-xs text-[var(--text-secondary)] tabular-nums truncate">
+                        {aboutConfig.ceo ? 'CEO configured' : 'No CEO'} · {aboutConfig.team.length} team · {aboutConfig.socials.filter((s) => s.enabled).length} socials
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => selectModule('about')}
+                    className="min-h-[38px] rounded-xl bg-[var(--bg-subtle)] px-4 text-xs font-semibold text-[var(--text-primary)] hover:opacity-85 whitespace-nowrap shrink-0 cursor-pointer"
+                  >
+                    Edit Info
+                  </button>
+                </div>
+              </section>
             </div>
           ) : activeModule === 'free-limits' ? (
-            <form onSubmit={handleSaveFreeLimits} className="space-y-5">
-              <div className="rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] p-5 space-y-4">
+            <form onSubmit={handleSaveFreeLimits} className="max-w-2xl space-y-5">
+              <div className="rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] p-5 sm:p-6 space-y-4">
                 <div className="flex items-center justify-between gap-3">
-                  <p className="text-sm font-semibold">Free Plan Limits</p>
+                  <div>
+                    <h2 className="text-base font-semibold">Free Plan Limits</h2>
+                    <p className="mt-0.5 text-xs text-[var(--text-secondary)]">
+                      Control maximum notes, folders, and images per note for Free users.
+                    </p>
+                  </div>
                   <button
                     type="button"
                     onClick={() => {
@@ -829,7 +1108,7 @@ export function AdminPanelScreen() {
                       setMaxFoldersDraft(String(DEFAULT_APP_CONTROLS_CONFIG.freeLimits.maxFolders));
                       setMaxImagesDraft(String(DEFAULT_APP_CONTROLS_CONFIG.freeLimits.maxImagesPerNote));
                     }}
-                    className="inline-flex min-h-[36px] items-center gap-1.5 rounded-xl bg-[var(--bg-subtle)] px-3 text-xs font-semibold text-[var(--text-primary)] hover:opacity-85 cursor-pointer"
+                    className="inline-flex min-h-[36px] items-center gap-1.5 rounded-xl bg-[var(--bg-subtle)] px-3 text-xs font-semibold text-[var(--text-primary)] hover:opacity-85 whitespace-nowrap shrink-0 cursor-pointer"
                   >
                     <RotateCcw className="h-3.5 w-3.5" strokeWidth={2} />
                     Reset Defaults
@@ -889,7 +1168,7 @@ export function AdminPanelScreen() {
               <button
                 type="submit"
                 disabled={appControlsSaving}
-                className="flex w-full min-h-[48px] items-center justify-center gap-2 rounded-xl bg-[var(--text-primary)] dark:bg-[var(--accent-primary)] text-sm font-semibold text-[var(--bg-card)] dark:text-[#171717] disabled:opacity-60 transition-opacity hover:opacity-90 cursor-pointer"
+                className="flex w-full sm:w-auto sm:min-w-[200px] min-h-[46px] items-center justify-center gap-2 rounded-xl bg-[var(--text-primary)] dark:bg-[var(--accent-primary)] px-6 text-sm font-semibold text-[var(--bg-card)] dark:text-[#171717] disabled:opacity-60 transition-opacity hover:opacity-90 cursor-pointer"
               >
                 {appControlsSaving ? (
                   <>
@@ -907,9 +1186,14 @@ export function AdminPanelScreen() {
               </button>
             </form>
           ) : activeModule === 'announcement' ? (
-            <form onSubmit={handleSaveAnnouncement} className="space-y-5">
-              <div className="rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] p-5 flex items-center justify-between gap-4">
-                <p className="text-sm font-semibold">Show Home Notice Banner</p>
+            <form onSubmit={handleSaveAnnouncement} className="max-w-2xl space-y-5">
+              <div className="rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] p-5 sm:p-6 flex items-center justify-between gap-4">
+                <div>
+                  <h2 className="text-base font-semibold">Show Home Notice Banner</h2>
+                  <p className="mt-0.5 text-xs text-[var(--text-secondary)]">
+                    Display an urgent notice or offer banner on every user&apos;s home screen.
+                  </p>
+                </div>
                 <button
                   type="button"
                   role="switch"
@@ -928,7 +1212,7 @@ export function AdminPanelScreen() {
                 </button>
               </div>
 
-              <div className="rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] p-5 space-y-3">
+              <div className="rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] p-5 sm:p-6 space-y-3">
                 <p className="text-sm font-semibold">Banner Content</p>
 
                 <input
@@ -973,7 +1257,7 @@ export function AdminPanelScreen() {
                     <option value="none">No action button</option>
                     <option value="premium">Open Premium</option>
                     <option value="about">Open About App</option>
-                    <option value="help">Open Help & Support</option>
+                    <option value="help">Open Help &amp; Support</option>
                   </select>
                 </div>
               </div>
@@ -994,7 +1278,7 @@ export function AdminPanelScreen() {
               <button
                 type="submit"
                 disabled={appControlsSaving}
-                className="flex w-full min-h-[48px] items-center justify-center gap-2 rounded-xl bg-[var(--text-primary)] dark:bg-[var(--accent-primary)] text-sm font-semibold text-[var(--bg-card)] dark:text-[#171717] disabled:opacity-60 transition-opacity hover:opacity-90 cursor-pointer"
+                className="flex w-full sm:w-auto sm:min-w-[200px] min-h-[46px] items-center justify-center gap-2 rounded-xl bg-[var(--text-primary)] dark:bg-[var(--accent-primary)] px-6 text-sm font-semibold text-[var(--bg-card)] dark:text-[#171717] disabled:opacity-60 transition-opacity hover:opacity-90 cursor-pointer"
               >
                 {appControlsSaving ? (
                   <>
@@ -1013,140 +1297,152 @@ export function AdminPanelScreen() {
             </form>
           ) : activeModule === 'premium-controls' ? (
             <form onSubmit={handleSavePremiumControls} className="space-y-5">
-              <div className="rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] p-5 space-y-4">
-                <div className="flex items-center justify-between gap-3">
-                  <p className="text-sm font-semibold">Feature Access</p>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setPremFeaturesDraft(
-                        DEFAULT_APP_CONTROLS_CONFIG.premiumControls.features
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
+                <div className="rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] p-5 sm:p-6 space-y-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <h2 className="text-base font-semibold">Feature Access</h2>
+                      <p className="mt-0.5 text-xs text-[var(--text-secondary)]">
+                        Choose which capabilities are Free or require Premium.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPremFeaturesDraft(
+                          DEFAULT_APP_CONTROLS_CONFIG.premiumControls.features
+                        );
+                        setMonthlyBdtDraft(
+                          String(DEFAULT_APP_CONTROLS_CONFIG.premiumControls.pricing.monthlyBdt)
+                        );
+                        setMonthlyUsdtDraft(
+                          String(DEFAULT_APP_CONTROLS_CONFIG.premiumControls.pricing.monthlyUsdt)
+                        );
+                        setYearlyBdtDraft(
+                          String(DEFAULT_APP_CONTROLS_CONFIG.premiumControls.pricing.yearlyBdt)
+                        );
+                        setYearlyUsdtDraft(
+                          String(DEFAULT_APP_CONTROLS_CONFIG.premiumControls.pricing.yearlyUsdt)
+                        );
+                      }}
+                      className="inline-flex min-h-[36px] items-center gap-1.5 rounded-xl bg-[var(--bg-subtle)] px-3 text-xs font-semibold text-[var(--text-primary)] hover:opacity-85 whitespace-nowrap shrink-0 cursor-pointer"
+                    >
+                      <RotateCcw className="h-3.5 w-3.5" strokeWidth={2} />
+                      Reset Defaults
+                    </button>
+                  </div>
+
+                  <div className="divide-y divide-[var(--divider)]">
+                    {(
+                      [
+                        { key: 'themePalettes', title: 'Theme Palettes', desc: 'Sepia, Sage & Slate' },
+                        { key: 'noteLock', title: 'Note Lock', desc: 'Fingerprint & 4-digit PIN lock' },
+                        { key: 'driveBackup', title: 'Google Drive Backup', desc: 'Cloud backup & restore' },
+                      ] as const
+                    ).map((feat) => {
+                      const isPrem = premFeaturesDraft[feat.key];
+                      return (
+                        <div
+                          key={feat.key}
+                          className="py-3.5 first:pt-1 last:pb-1 flex items-center justify-between gap-3"
+                        >
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium text-[var(--text-primary)]">
+                              {feat.title}
+                            </p>
+                            <p className="text-xs text-[var(--text-secondary)] mt-0.5">
+                              {feat.desc}
+                            </p>
+                          </div>
+
+                          <div className="flex items-center rounded-xl bg-[var(--bg-canvas)] border border-[var(--divider)] p-0.5 shrink-0">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setPremFeaturesDraft((prev) => ({ ...prev, [feat.key]: false }))
+                              }
+                              className={`min-h-[32px] rounded-lg px-3 text-xs font-semibold transition-colors cursor-pointer ${
+                                !isPrem
+                                  ? 'bg-[var(--text-primary)] dark:bg-[var(--accent-primary)] text-[var(--bg-card)] dark:text-[#171717]'
+                                  : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+                              }`}
+                            >
+                              Free
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setPremFeaturesDraft((prev) => ({ ...prev, [feat.key]: true }))
+                              }
+                              className={`min-h-[32px] rounded-lg px-3 text-xs font-semibold transition-colors cursor-pointer ${
+                                isPrem
+                                  ? 'bg-[var(--accent-primary)] text-white dark:text-[#171717]'
+                                  : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+                              }`}
+                            >
+                              Premium
+                            </button>
+                          </div>
+                        </div>
                       );
-                      setMonthlyBdtDraft(
-                        String(DEFAULT_APP_CONTROLS_CONFIG.premiumControls.pricing.monthlyBdt)
-                      );
-                      setMonthlyUsdtDraft(
-                        String(DEFAULT_APP_CONTROLS_CONFIG.premiumControls.pricing.monthlyUsdt)
-                      );
-                      setYearlyBdtDraft(
-                        String(DEFAULT_APP_CONTROLS_CONFIG.premiumControls.pricing.yearlyBdt)
-                      );
-                      setYearlyUsdtDraft(
-                        String(DEFAULT_APP_CONTROLS_CONFIG.premiumControls.pricing.yearlyUsdt)
-                      );
-                    }}
-                    className="inline-flex min-h-[36px] items-center gap-1.5 rounded-xl bg-[var(--bg-subtle)] px-3 text-xs font-semibold text-[var(--text-primary)] hover:opacity-85 cursor-pointer"
-                  >
-                    <RotateCcw className="h-3.5 w-3.5" strokeWidth={2} />
-                    Reset Defaults
-                  </button>
+                    })}
+                  </div>
                 </div>
 
-                <div className="divide-y divide-[var(--divider)]">
-                  {(
-                    [
-                      { key: 'themePalettes', title: 'Theme Palettes', desc: 'Sepia, Sage & Slate' },
-                      { key: 'noteLock', title: 'Note Lock PIN', desc: '4-digit private note lock' },
-                      { key: 'driveBackup', title: 'Google Drive Backup', desc: 'Cloud backup & restore' },
-                    ] as const
-                  ).map((feat) => {
-                    const isPrem = premFeaturesDraft[feat.key];
-                    return (
-                      <div
-                        key={feat.key}
-                        className="py-3 first:pt-1 last:pb-1 flex items-center justify-between gap-3"
-                      >
-                        <div className="min-w-0">
-                          <p className="text-sm font-medium text-[var(--text-primary)]">
-                            {feat.title}
-                          </p>
-                          <p className="text-[11px] text-[var(--text-secondary)] mt-0.5">
-                            {feat.desc}
-                          </p>
-                        </div>
+                <div className="rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] p-5 sm:p-6 space-y-4">
+                  <div>
+                    <h2 className="text-base font-semibold">Subscription Pricing</h2>
+                    <p className="mt-0.5 text-xs text-[var(--text-secondary)]">
+                      Monthly and yearly pricing displayed in BDT and USDT.
+                    </p>
+                  </div>
 
-                        <div className="flex items-center rounded-xl bg-[var(--bg-canvas)] border border-[var(--divider)] p-0.5 shrink-0">
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setPremFeaturesDraft((prev) => ({ ...prev, [feat.key]: false }))
-                            }
-                            className={`min-h-[32px] rounded-lg px-3 text-xs font-semibold transition-colors cursor-pointer ${
-                              !isPrem
-                                ? 'bg-[var(--text-primary)] dark:bg-[var(--accent-primary)] text-[var(--bg-card)] dark:text-[#171717]'
-                                : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-                            }`}
-                          >
-                            Free
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setPremFeaturesDraft((prev) => ({ ...prev, [feat.key]: true }))
-                            }
-                            className={`min-h-[32px] rounded-lg px-3 text-xs font-semibold transition-colors cursor-pointer ${
-                              isPrem
-                                ? 'bg-[var(--accent-primary)] text-white dark:text-[#171717]'
-                                : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-                            }`}
-                          >
-                            Premium
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-
-              <div className="rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] p-5 space-y-4">
-                <p className="text-sm font-semibold">Subscription Pricing</p>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <input
-                    type="number"
-                    min={1}
-                    step={1}
-                    inputMode="numeric"
-                    value={monthlyBdtDraft}
-                    onChange={(e) => setMonthlyBdtDraft(e.target.value)}
-                    placeholder="Monthly BDT (590)"
-                    aria-label="Monthly BDT price"
-                    className="w-full min-h-[46px] rounded-xl bg-[var(--bg-canvas)] border border-[var(--divider)] px-3.5 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-primary)] tabular-nums"
-                  />
-                  <input
-                    type="number"
-                    min={0.1}
-                    step="0.01"
-                    inputMode="decimal"
-                    value={monthlyUsdtDraft}
-                    onChange={(e) => setMonthlyUsdtDraft(e.target.value)}
-                    placeholder="Monthly USDT (4.99)"
-                    aria-label="Monthly USDT price"
-                    className="w-full min-h-[46px] rounded-xl bg-[var(--bg-canvas)] border border-[var(--divider)] px-3.5 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-primary)] tabular-nums"
-                  />
-                  <input
-                    type="number"
-                    min={1}
-                    step={1}
-                    inputMode="numeric"
-                    value={yearlyBdtDraft}
-                    onChange={(e) => setYearlyBdtDraft(e.target.value)}
-                    placeholder="Yearly BDT (4790)"
-                    aria-label="Yearly BDT price"
-                    className="w-full min-h-[46px] rounded-xl bg-[var(--bg-canvas)] border border-[var(--divider)] px-3.5 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-primary)] tabular-nums"
-                  />
-                  <input
-                    type="number"
-                    min={0.1}
-                    step="0.01"
-                    inputMode="decimal"
-                    value={yearlyUsdtDraft}
-                    onChange={(e) => setYearlyUsdtDraft(e.target.value)}
-                    placeholder="Yearly USDT (39.99)"
-                    aria-label="Yearly USDT price"
-                    className="w-full min-h-[46px] rounded-xl bg-[var(--bg-canvas)] border border-[var(--divider)] px-3.5 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-primary)] tabular-nums"
-                  />
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <input
+                      type="number"
+                      min={1}
+                      step={1}
+                      inputMode="numeric"
+                      value={monthlyBdtDraft}
+                      onChange={(e) => setMonthlyBdtDraft(e.target.value)}
+                      placeholder="Monthly BDT (590)"
+                      aria-label="Monthly BDT price"
+                      className="w-full min-h-[46px] rounded-xl bg-[var(--bg-canvas)] border border-[var(--divider)] px-3.5 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-primary)] tabular-nums"
+                    />
+                    <input
+                      type="number"
+                      min={0.1}
+                      step="0.01"
+                      inputMode="decimal"
+                      value={monthlyUsdtDraft}
+                      onChange={(e) => setMonthlyUsdtDraft(e.target.value)}
+                      placeholder="Monthly USDT (4.99)"
+                      aria-label="Monthly USDT price"
+                      className="w-full min-h-[46px] rounded-xl bg-[var(--bg-canvas)] border border-[var(--divider)] px-3.5 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-primary)] tabular-nums"
+                    />
+                    <input
+                      type="number"
+                      min={1}
+                      step={1}
+                      inputMode="numeric"
+                      value={yearlyBdtDraft}
+                      onChange={(e) => setYearlyBdtDraft(e.target.value)}
+                      placeholder="Yearly BDT (4790)"
+                      aria-label="Yearly BDT price"
+                      className="w-full min-h-[46px] rounded-xl bg-[var(--bg-canvas)] border border-[var(--divider)] px-3.5 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-primary)] tabular-nums"
+                    />
+                    <input
+                      type="number"
+                      min={0.1}
+                      step="0.01"
+                      inputMode="decimal"
+                      value={yearlyUsdtDraft}
+                      onChange={(e) => setYearlyUsdtDraft(e.target.value)}
+                      placeholder="Yearly USDT (39.99)"
+                      aria-label="Yearly USDT price"
+                      className="w-full min-h-[46px] rounded-xl bg-[var(--bg-canvas)] border border-[var(--divider)] px-3.5 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-primary)] tabular-nums"
+                    />
+                  </div>
                 </div>
               </div>
 
@@ -1159,14 +1455,14 @@ export function AdminPanelScreen() {
               {premJustSaved && !appControlsSyncError && (
                 <div className="flex items-center gap-2 rounded-2xl bg-[#2E7D32]/12 border border-[#2E7D32]/30 p-3.5 text-xs font-semibold text-[#2E7D32] dark:text-[#81C995]">
                   <CheckCircle2 className="h-4 w-4 shrink-0" />
-                  Saved — Plans & pricing updated in real time
+                  Saved — Plans &amp; pricing updated in real time
                 </div>
               )}
 
               <button
                 type="submit"
                 disabled={appControlsSaving}
-                className="flex w-full min-h-[48px] items-center justify-center gap-2 rounded-xl bg-[var(--text-primary)] dark:bg-[var(--accent-primary)] text-sm font-semibold text-[var(--bg-card)] dark:text-[#171717] disabled:opacity-60 transition-opacity hover:opacity-90 cursor-pointer"
+                className="flex w-full sm:w-auto sm:min-w-[220px] min-h-[46px] items-center justify-center gap-2 rounded-xl bg-[var(--text-primary)] dark:bg-[var(--accent-primary)] px-6 text-sm font-semibold text-[var(--bg-card)] dark:text-[#171717] disabled:opacity-60 transition-opacity hover:opacity-90 cursor-pointer"
               >
                 {appControlsSaving ? (
                   <>
@@ -1185,10 +1481,10 @@ export function AdminPanelScreen() {
             </form>
           ) : activeModule === 'text-tools' ? (
             <form onSubmit={handleSaveTextTools} className="space-y-5">
-              <div className="rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] p-5 space-y-4">
-                <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] p-5 sm:p-6 space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-[var(--divider)]">
                   <div>
-                    <p className="text-sm font-semibold">Editor Text Tools</p>
+                    <h2 className="text-base font-semibold">Editor Text Tools</h2>
                     <p className="mt-0.5 text-xs text-[var(--text-secondary)] tabular-nums">
                       {toolCounts.free} Free (Toolbar) · {toolCounts.premium} Premium (+ Menu) · {toolCounts.hidden} Off
                     </p>
@@ -1196,14 +1492,14 @@ export function AdminPanelScreen() {
                   <button
                     type="button"
                     onClick={() => setToolsDraft(buildDefaultToolsMap())}
-                    className="inline-flex min-h-[36px] items-center gap-1.5 rounded-xl bg-[var(--bg-subtle)] px-3 text-xs font-semibold text-[var(--text-primary)] hover:opacity-85 cursor-pointer"
+                    className="inline-flex min-h-[36px] items-center gap-1.5 rounded-xl bg-[var(--bg-subtle)] px-3 text-xs font-semibold text-[var(--text-primary)] hover:opacity-85 whitespace-nowrap shrink-0 cursor-pointer"
                   >
                     <RotateCcw className="h-3.5 w-3.5" strokeWidth={2} />
                     Reset Defaults
                   </button>
                 </div>
 
-                <div className="divide-y divide-[var(--divider)]">
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-x-8">
                   {TEXT_TOOLS_CATALOG.map((tool) => {
                     const rule = toolsDraft[tool.id] || {
                       enabled: tool.defaultEnabled,
@@ -1212,11 +1508,11 @@ export function AdminPanelScreen() {
                     return (
                       <div
                         key={tool.id}
-                        className="py-3 first:pt-1 last:pb-1 flex flex-wrap items-center justify-between gap-3"
+                        className="py-3.5 border-b border-[var(--divider)] flex items-center justify-between gap-3"
                       >
                         <div className="min-w-0">
                           <p
-                            className={`text-sm font-medium ${
+                            className={`text-sm font-medium truncate ${
                               rule.enabled
                                 ? 'text-[var(--text-primary)]'
                                 : 'text-[var(--text-secondary)] line-through opacity-65'
@@ -1224,7 +1520,7 @@ export function AdminPanelScreen() {
                           >
                             {tool.label}
                           </p>
-                          <p className="text-[11px] text-[var(--text-secondary)] mt-0.5">
+                          <p className="text-xs text-[var(--text-secondary)] mt-0.5">
                             {!rule.enabled
                               ? 'Disabled'
                               : rule.premium
@@ -1315,7 +1611,7 @@ export function AdminPanelScreen() {
               <button
                 type="submit"
                 disabled={textToolsSaving}
-                className="flex w-full min-h-[48px] items-center justify-center gap-2 rounded-xl bg-[var(--text-primary)] dark:bg-[var(--accent-primary)] text-sm font-semibold text-[var(--bg-card)] dark:text-[#171717] disabled:opacity-60 transition-opacity hover:opacity-90 cursor-pointer"
+                className="flex w-full sm:w-auto sm:min-w-[200px] min-h-[46px] items-center justify-center gap-2 rounded-xl bg-[var(--text-primary)] dark:bg-[var(--accent-primary)] px-6 text-sm font-semibold text-[var(--bg-card)] dark:text-[#171717] disabled:opacity-60 transition-opacity hover:opacity-90 cursor-pointer"
               >
                 {textToolsSaving ? (
                   <>
@@ -1333,25 +1629,33 @@ export function AdminPanelScreen() {
               </button>
             </form>
           ) : activeModule === 'support' ? (
-            <div className="space-y-4">
-              <div className="flex items-center gap-2">
-                {(['all', 'open', 'replied'] as const).map((filter) => {
-                  const active = supportFilter === filter;
-                  return (
-                    <button
-                      key={filter}
-                      type="button"
-                      onClick={() => setSupportFilter(filter)}
-                      className={`min-h-[38px] rounded-xl px-4 text-xs font-semibold capitalize transition-colors cursor-pointer ${
-                        active
-                          ? 'bg-[var(--text-primary)] dark:bg-[var(--accent-primary)] text-[var(--bg-card)] dark:text-[#171717]'
-                          : 'bg-[var(--bg-card)] border border-[var(--divider)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-                      }`}
-                    >
-                      {filter}
-                    </button>
-                  );
-                })}
+            <div className="space-y-5">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="inline-flex items-center gap-1 rounded-xl bg-[var(--bg-card)] border border-[var(--divider)] p-1">
+                  {(
+                    [
+                      { id: 'all', label: 'All', count: supportTickets.length },
+                      { id: 'open', label: 'Open', count: openTicketCount },
+                      { id: 'replied', label: 'Replied', count: repliedTicketCount },
+                    ] as const
+                  ).map((filter) => {
+                    const active = supportFilter === filter.id;
+                    return (
+                      <button
+                        key={filter.id}
+                        type="button"
+                        onClick={() => setSupportFilter(filter.id)}
+                        className={`min-h-[34px] rounded-lg px-3.5 text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer tabular-nums ${
+                          active
+                            ? 'bg-[var(--text-primary)] dark:bg-[var(--accent-primary)] text-[var(--bg-card)] dark:text-[#171717]'
+                            : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+                        }`}
+                      >
+                        {filter.label} ({filter.count})
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
 
               {supportSyncError && (
@@ -1361,14 +1665,14 @@ export function AdminPanelScreen() {
               )}
 
               {filteredTickets.length === 0 ? (
-                <div className="rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] p-8 text-center">
+                <div className="rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] p-10 text-center">
                   <MessageSquare className="h-7 w-7 mx-auto text-[var(--text-secondary)] opacity-60" strokeWidth={1.75} />
                   <p className="mt-3 text-sm font-semibold text-[var(--text-primary)]">
                     No support messages yet
                   </p>
                 </div>
               ) : (
-                <div className="space-y-4">
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
                   {filteredTickets.map((ticket) => {
                     const draft = replyDrafts[ticket.id] ?? '';
                     const isSending = replyingId === ticket.id;
@@ -1378,9 +1682,9 @@ export function AdminPanelScreen() {
                     );
 
                     return (
-                      <div
+                      <article
                         key={ticket.id}
-                        className="rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] p-5 space-y-3.5"
+                        className="rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] p-5 space-y-4"
                       >
                         <div className="flex items-start justify-between gap-3">
                           <div className="min-w-0">
@@ -1389,37 +1693,32 @@ export function AdminPanelScreen() {
                             </h3>
                             <p className="mt-0.5 text-xs text-[var(--text-secondary)] break-all">
                               {ticket.userName} · {ticket.userEmail}
+                              {ticket.createdAt && ` · ${formatFullDate(ticket.createdAt)}`}
                             </p>
                           </div>
                           <span
-                            className={`shrink-0 rounded-lg px-2.5 py-1 text-[11px] font-semibold ${
+                            className={`shrink-0 text-xs font-semibold ${
                               ticket.status === 'replied'
-                                ? 'bg-[#2E7D32]/12 text-[#2E7D32] dark:text-[#81C995]'
-                                : 'bg-[var(--accent-soft)] text-[var(--accent-primary)]'
+                                ? 'text-[#2E7D32] dark:text-[#81C995]'
+                                : 'text-[var(--accent-primary)]'
                             }`}
                           >
                             {ticket.status === 'replied' ? 'Replied' : 'Open'}
                           </span>
                         </div>
 
-                        <p className="text-sm text-[var(--text-primary)] whitespace-pre-wrap leading-relaxed rounded-xl bg-[var(--bg-canvas)] border border-[var(--divider)] p-3.5">
+                        <p className="text-sm text-[var(--text-primary)] whitespace-pre-wrap leading-relaxed pt-3 border-t border-[var(--divider)]">
                           {ticket.message}
                         </p>
 
-                        {ticket.createdAt && (
-                          <p className="text-[11px] text-[var(--text-secondary)]">
-                            {formatFullDate(ticket.createdAt)}
-                          </p>
-                        )}
-
                         {ticket.adminReply && (
-                          <div className="rounded-xl bg-[var(--accent-soft)]/50 border border-[var(--accent-primary)]/25 p-3.5 space-y-1.5">
+                          <div className="rounded-xl bg-[var(--accent-soft)]/45 p-3.5 space-y-1.5">
                             <div className="flex items-center justify-between gap-2">
                               <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-[var(--accent-primary)]">
                                 <CheckCircle2 className="h-3.5 w-3.5" />
                                 Admin Reply
                               </span>
-                              <span className="text-[11px] text-[var(--text-secondary)]">
+                              <span className="text-xs text-[var(--text-secondary)]">
                                 {ticket.emailDeliveryStatus === 'sent'
                                   ? 'Emailed'
                                   : ticket.repliedAt
@@ -1433,7 +1732,7 @@ export function AdminPanelScreen() {
                           </div>
                         )}
 
-                        <div className="space-y-2.5 pt-1">
+                        <div className="space-y-2.5 pt-2 border-t border-[var(--divider)]">
                           <textarea
                             value={draft}
                             onChange={(e) =>
@@ -1465,14 +1764,14 @@ export function AdminPanelScreen() {
 
                             <a
                               href={mailtoHref}
-                              className="min-h-[42px] flex items-center justify-center gap-2 rounded-xl border border-[var(--divider)] bg-[var(--bg-canvas)] px-4 text-xs font-semibold text-[var(--text-primary)] hover:bg-[var(--bg-subtle)] transition-colors"
+                              className="min-h-[42px] flex items-center justify-center gap-2 rounded-xl border border-[var(--divider)] bg-[var(--bg-canvas)] px-4 text-xs font-semibold text-[var(--text-primary)] hover:bg-[var(--bg-subtle)] transition-colors whitespace-nowrap"
                             >
                               <Mail className="h-3.5 w-3.5" strokeWidth={2} />
                               Send via Email App
                             </a>
                           </div>
                         </div>
-                      </div>
+                      </article>
                     );
                   })}
                 </div>
@@ -1480,227 +1779,229 @@ export function AdminPanelScreen() {
             </div>
           ) : activeModule === 'about' ? (
             <form onSubmit={handleSaveAboutApp} className="space-y-6">
-              {/* Social Media Controls */}
-              <div className="rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] p-5 space-y-3.5">
-                <div className="flex flex-wrap items-center justify-between gap-2.5">
-                  <p className="text-sm font-semibold">Social Media Links</p>
-                  {availableSocialOptions.length > 0 && (
-                    <div className="flex items-center gap-2">
-                      <select
-                        value={
-                          availableSocialOptions.some((o) => o.id === selectedSocialToAdd)
-                            ? selectedSocialToAdd
-                            : availableSocialOptions[0].id
-                        }
-                        onChange={(e) =>
-                          setSelectedSocialToAdd(e.target.value as SocialPlatformId)
-                        }
-                        aria-label="Select social platform"
-                        className="min-h-[36px] rounded-xl bg-[var(--bg-canvas)] border border-[var(--divider)] px-3 text-xs font-medium text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent-primary)]"
-                      >
-                        {availableSocialOptions.map((opt) => (
-                          <option key={opt.id} value={opt.id}>
-                            {opt.label}
-                          </option>
-                        ))}
-                      </select>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
+                {/* Leadership: CEO (Top Card) */}
+                <div className="rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] p-5 sm:p-6 space-y-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <h2 className="text-base font-semibold">CEO (Top Profile)</h2>
+                    {!ceoDraft && (
                       <button
                         type="button"
-                        onClick={handleAddSocialLink}
-                        className="inline-flex min-h-[36px] items-center gap-1 rounded-xl bg-[var(--accent-soft)] px-3 text-xs font-semibold text-[var(--accent-primary)] cursor-pointer"
+                        onClick={handleAddCeo}
+                        className="inline-flex min-h-[36px] items-center gap-1.5 rounded-xl bg-[var(--accent-soft)] px-3 text-xs font-semibold text-[var(--accent-primary)] whitespace-nowrap shrink-0 cursor-pointer"
                       >
                         <Plus className="h-3.5 w-3.5" strokeWidth={2.2} />
-                        Add
+                        Add CEO
                       </button>
+                    )}
+                  </div>
+
+                  {!ceoDraft ? (
+                    <div className="py-6 text-center text-xs text-[var(--text-secondary)] border-t border-[var(--divider)]">
+                      No CEO profile added yet
                     </div>
-                  )}
-                </div>
-
-                {socialsDraft.length === 0 ? (
-                  <div className="rounded-xl bg-[var(--bg-canvas)] border border-[var(--divider)] p-4 text-center text-xs text-[var(--text-secondary)]">
-                    No social media links added yet
-                  </div>
-                ) : (
-                  <div className="divide-y divide-[var(--divider)]">
-                    {socialsDraft.map((item, idx) => {
-                      const optMeta = SOCIAL_PLATFORM_OPTIONS.find((o) => o.id === item.id);
-                      return (
-                        <div key={item.id} className="py-3 first:pt-1 last:pb-1 space-y-2">
-                          <div className="flex items-center justify-between gap-3">
-                            <span className="text-xs font-semibold text-[var(--text-primary)]">
-                              {item.label}
-                            </span>
-                            <div className="flex items-center gap-2.5">
-                              <button
-                                type="button"
-                                role="switch"
-                                aria-checked={item.enabled}
-                                onClick={() =>
-                                  setSocialsDraft((prev) =>
-                                    prev.map((s, i) =>
-                                      i === idx ? { ...s, enabled: !s.enabled } : s
-                                    )
-                                  )
-                                }
-                                className={`relative h-6 w-11 shrink-0 rounded-full transition-colors cursor-pointer ${
-                                  item.enabled ? 'bg-[var(--accent-primary)]' : 'bg-[var(--divider)]'
-                                }`}
-                              >
-                                <span
-                                  className={`absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white transition-transform ${
-                                    item.enabled ? 'translate-x-5' : 'translate-x-0'
-                                  }`}
-                                />
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  setSocialsDraft((prev) => prev.filter((_, i) => i !== idx))
-                                }
-                                aria-label={`Remove ${item.label}`}
-                                className="min-h-[32px] min-w-[32px] flex items-center justify-center rounded-lg bg-[#E45B5B]/10 text-[#E45B5B] cursor-pointer"
-                              >
-                                <Trash2 className="h-3.5 w-3.5" strokeWidth={2} />
-                              </button>
-                            </div>
+                  ) : (
+                    <div className="pt-4 border-t border-[var(--divider)] space-y-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-3.5">
+                          <div className="h-16 w-14 shrink-0 overflow-hidden rounded-xl border border-[var(--divider)] bg-[var(--bg-canvas)] flex items-center justify-center">
+                            {ceoDraft.image ? (
+                              <img
+                                src={ceoDraft.image}
+                                alt={ceoDraft.name || 'CEO'}
+                                referrerPolicy="no-referrer"
+                                className="h-full w-full object-cover object-top"
+                              />
+                            ) : (
+                              <User className="h-6 w-6 text-[var(--text-secondary)] opacity-60" strokeWidth={1.75} />
+                            )}
                           </div>
-                          <input
-                            type="text"
-                            inputMode="url"
-                            value={item.href}
-                            onChange={(e) => {
-                              const val = e.target.value;
-                              setSocialsDraft((prev) =>
-                                prev.map((s, i) => (i === idx ? { ...s, href: val } : s))
-                              );
-                            }}
-                            placeholder={optMeta?.placeholder || `${item.label} URL`}
-                            aria-label={`${item.label} URL`}
-                            className="w-full min-h-[42px] rounded-xl bg-[var(--bg-canvas)] border border-[var(--divider)] px-3.5 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-primary)]"
-                          />
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-
-              {/* Leadership: CEO (Top Card) */}
-              <div className="rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] p-5 space-y-4">
-                <div className="flex items-center justify-between gap-3">
-                  <p className="text-sm font-semibold">CEO (Top Profile)</p>
-                  {!ceoDraft && (
-                    <button
-                      type="button"
-                      onClick={handleAddCeo}
-                      className="inline-flex min-h-[36px] items-center gap-1.5 rounded-xl bg-[var(--accent-soft)] px-3 text-xs font-semibold text-[var(--accent-primary)] cursor-pointer"
-                    >
-                      <Plus className="h-3.5 w-3.5" strokeWidth={2.2} />
-                      Add CEO
-                    </button>
-                  )}
-                </div>
-
-                {!ceoDraft ? (
-                  <div className="rounded-xl bg-[var(--bg-canvas)] border border-[var(--divider)] p-4 text-center text-xs text-[var(--text-secondary)]">
-                    No CEO profile added yet
-                  </div>
-                ) : (
-                  <div className="rounded-2xl bg-[var(--bg-canvas)] border border-[var(--divider)] p-4 space-y-3">
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="flex items-center gap-3.5">
-                        <div className="h-16 w-14 shrink-0 overflow-hidden rounded-xl border border-[var(--divider)] bg-[var(--bg-subtle)] flex items-center justify-center">
-                          {ceoDraft.image ? (
-                            <img
-                              src={ceoDraft.image}
-                              alt={ceoDraft.name || 'CEO'}
-                              referrerPolicy="no-referrer"
-                              className="h-full w-full object-cover object-top"
+                          <label className="inline-flex min-h-[38px] items-center gap-2 rounded-xl border border-[var(--divider)] bg-[var(--bg-canvas)] px-3.5 text-xs font-semibold text-[var(--text-primary)] hover:bg-[var(--bg-subtle)] transition-colors cursor-pointer">
+                            <ImagePlus className="h-3.5 w-3.5" />
+                            <span>{ceoDraft.image ? 'Change Photo' : 'Upload Photo'}</span>
+                            <input
+                              type="file"
+                              accept="image/*"
+                              className="hidden"
+                              onChange={(e) => {
+                                const file = e.target.files?.[0];
+                                e.target.value = '';
+                                void handlePhotoUpload(file, (url) =>
+                                  setCeoDraft((prev) => (prev ? { ...prev, image: url } : prev))
+                                );
+                              }}
                             />
-                          ) : (
-                            <User className="h-6 w-6 text-[var(--text-secondary)] opacity-60" strokeWidth={1.75} />
-                          )}
+                          </label>
                         </div>
-                        <label className="inline-flex min-h-[38px] items-center gap-2 rounded-xl border border-[var(--divider)] bg-[var(--bg-card)] px-3.5 text-xs font-semibold text-[var(--text-primary)] hover:bg-[var(--bg-subtle)] transition-colors cursor-pointer">
-                          <ImagePlus className="h-3.5 w-3.5" />
-                          <span>{ceoDraft.image ? 'Change Photo' : 'Upload Photo'}</span>
-                          <input
-                            type="file"
-                            accept="image/*"
-                            className="hidden"
-                            onChange={(e) => {
-                              const file = e.target.files?.[0];
-                              e.target.value = '';
-                              void handlePhotoUpload(file, (url) =>
-                                setCeoDraft((prev) => (prev ? { ...prev, image: url } : prev))
-                              );
-                            }}
-                          />
-                        </label>
+
+                        <button
+                          type="button"
+                          onClick={() => setCeoDraft(null)}
+                          aria-label="Remove CEO"
+                          className="min-h-[36px] min-w-[36px] flex items-center justify-center rounded-xl bg-[#E45B5B]/10 text-[#E45B5B] cursor-pointer"
+                        >
+                          <Trash2 className="h-4 w-4" strokeWidth={2} />
+                        </button>
                       </div>
 
-                      <button
-                        type="button"
-                        onClick={() => setCeoDraft(null)}
-                        aria-label="Remove CEO"
-                        className="min-h-[36px] min-w-[36px] flex items-center justify-center rounded-xl bg-[#E45B5B]/10 text-[#E45B5B] cursor-pointer"
-                      >
-                        <Trash2 className="h-4 w-4" strokeWidth={2} />
-                      </button>
-                    </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                        <input
+                          type="text"
+                          value={ceoDraft.name}
+                          onChange={(e) =>
+                            setCeoDraft((prev) =>
+                              prev ? { ...prev, name: e.target.value } : prev
+                            )
+                          }
+                          placeholder="CEO name"
+                          aria-label="CEO Name"
+                          className="w-full min-h-[42px] rounded-xl bg-[var(--bg-canvas)] border border-[var(--divider)] px-3.5 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-primary)]"
+                        />
+                        <input
+                          type="text"
+                          value={ceoDraft.role}
+                          onChange={(e) =>
+                            setCeoDraft((prev) =>
+                              prev ? { ...prev, role: e.target.value } : prev
+                            )
+                          }
+                          placeholder="Role / Title"
+                          aria-label="CEO Role"
+                          className="w-full min-h-[42px] rounded-xl bg-[var(--bg-canvas)] border border-[var(--divider)] px-3.5 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-primary)]"
+                        />
+                      </div>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                       <input
                         type="text"
-                        value={ceoDraft.name}
+                        inputMode="url"
+                        value={ceoDraft.image.startsWith('data:') ? '' : ceoDraft.image}
                         onChange={(e) =>
                           setCeoDraft((prev) =>
-                            prev ? { ...prev, name: e.target.value } : prev
+                            prev ? { ...prev, image: e.target.value } : prev
                           )
                         }
-                        placeholder="CEO name"
-                        aria-label="CEO Name"
-                        className="w-full min-h-[42px] rounded-xl bg-[var(--bg-card)] border border-[var(--divider)] px-3.5 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-primary)]"
-                      />
-                      <input
-                        type="text"
-                        value={ceoDraft.role}
-                        onChange={(e) =>
-                          setCeoDraft((prev) =>
-                            prev ? { ...prev, role: e.target.value } : prev
-                          )
-                        }
-                        placeholder="Role / Title"
-                        aria-label="CEO Role"
-                        className="w-full min-h-[42px] rounded-xl bg-[var(--bg-card)] border border-[var(--divider)] px-3.5 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-primary)]"
+                        placeholder="Photo URL (optional)"
+                        aria-label="CEO Photo URL"
+                        className="w-full min-h-[42px] rounded-xl bg-[var(--bg-canvas)] border border-[var(--divider)] px-3.5 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-primary)]"
                       />
                     </div>
+                  )}
+                </div>
 
-                    <input
-                      type="text"
-                      inputMode="url"
-                      value={ceoDraft.image.startsWith('data:') ? '' : ceoDraft.image}
-                      onChange={(e) =>
-                        setCeoDraft((prev) =>
-                          prev ? { ...prev, image: e.target.value } : prev
-                        )
-                      }
-                      placeholder="Photo URL (optional)"
-                      aria-label="CEO Photo URL"
-                      className="w-full min-h-[42px] rounded-xl bg-[var(--bg-card)] border border-[var(--divider)] px-3.5 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-primary)]"
-                    />
+                {/* Social Media Controls */}
+                <div className="rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] p-5 sm:p-6 space-y-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2.5">
+                    <h2 className="text-base font-semibold">Social Media Links</h2>
+                    {availableSocialOptions.length > 0 && (
+                      <div className="flex items-center gap-2">
+                        <select
+                          value={
+                            availableSocialOptions.some((o) => o.id === selectedSocialToAdd)
+                              ? selectedSocialToAdd
+                              : availableSocialOptions[0].id
+                          }
+                          onChange={(e) =>
+                            setSelectedSocialToAdd(e.target.value as SocialPlatformId)
+                          }
+                          aria-label="Select social platform"
+                          className="min-h-[36px] rounded-xl bg-[var(--bg-canvas)] border border-[var(--divider)] px-3 text-xs font-medium text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent-primary)]"
+                        >
+                          {availableSocialOptions.map((opt) => (
+                            <option key={opt.id} value={opt.id}>
+                              {opt.label}
+                            </option>
+                          ))}
+                        </select>
+                        <button
+                          type="button"
+                          onClick={handleAddSocialLink}
+                          className="inline-flex min-h-[36px] items-center gap-1 rounded-xl bg-[var(--accent-soft)] px-3 text-xs font-semibold text-[var(--accent-primary)] whitespace-nowrap shrink-0 cursor-pointer"
+                        >
+                          <Plus className="h-3.5 w-3.5" strokeWidth={2.2} />
+                          Add
+                        </button>
+                      </div>
+                    )}
                   </div>
-                )}
+
+                  {socialsDraft.length === 0 ? (
+                    <div className="py-6 text-center text-xs text-[var(--text-secondary)] border-t border-[var(--divider)]">
+                      No social media links added yet
+                    </div>
+                  ) : (
+                    <div className="divide-y divide-[var(--divider)] border-t border-[var(--divider)]">
+                      {socialsDraft.map((item, idx) => {
+                        const optMeta = SOCIAL_PLATFORM_OPTIONS.find((o) => o.id === item.id);
+                        return (
+                          <div key={item.id} className="py-3.5 last:pb-0 space-y-2">
+                            <div className="flex items-center justify-between gap-3">
+                              <span className="text-xs font-semibold text-[var(--text-primary)]">
+                                {item.label}
+                              </span>
+                              <div className="flex items-center gap-2.5">
+                                <button
+                                  type="button"
+                                  role="switch"
+                                  aria-checked={item.enabled}
+                                  onClick={() =>
+                                    setSocialsDraft((prev) =>
+                                      prev.map((s, i) =>
+                                        i === idx ? { ...s, enabled: !s.enabled } : s
+                                      )
+                                    )
+                                  }
+                                  className={`relative h-6 w-11 shrink-0 rounded-full transition-colors cursor-pointer ${
+                                    item.enabled ? 'bg-[var(--accent-primary)]' : 'bg-[var(--divider)]'
+                                  }`}
+                                >
+                                  <span
+                                    className={`absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white transition-transform ${
+                                      item.enabled ? 'translate-x-5' : 'translate-x-0'
+                                    }`}
+                                  />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setSocialsDraft((prev) => prev.filter((_, i) => i !== idx))
+                                  }
+                                  aria-label={`Remove ${item.label}`}
+                                  className="min-h-[32px] min-w-[32px] flex items-center justify-center rounded-lg bg-[#E45B5B]/10 text-[#E45B5B] cursor-pointer"
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" strokeWidth={2} />
+                                </button>
+                              </div>
+                            </div>
+                            <input
+                              type="text"
+                              inputMode="url"
+                              value={item.href}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                setSocialsDraft((prev) =>
+                                  prev.map((s, i) => (i === idx ? { ...s, href: val } : s))
+                                );
+                              }}
+                              placeholder={optMeta?.placeholder || `${item.label} URL`}
+                              aria-label={`${item.label} URL`}
+                              className="w-full min-h-[42px] rounded-xl bg-[var(--bg-canvas)] border border-[var(--divider)] px-3.5 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-primary)]"
+                            />
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
               </div>
 
-              {/* Team Members Controls (Sequential Grid Below CEO) */}
-              <div className="rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] p-5 space-y-4">
+              {/* Team Members Controls */}
+              <div className="rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] p-5 sm:p-6 space-y-4">
                 <div className="flex items-center justify-between gap-3">
-                  <p className="text-sm font-semibold">Team Members</p>
+                  <h2 className="text-base font-semibold">Team Members</h2>
                   <button
                     type="button"
                     onClick={handleAddTeamMember}
-                    className="inline-flex min-h-[36px] items-center gap-1.5 rounded-xl bg-[var(--accent-soft)] px-3 text-xs font-semibold text-[var(--accent-primary)] cursor-pointer"
+                    className="inline-flex min-h-[36px] items-center gap-1.5 rounded-xl bg-[var(--accent-soft)] px-3 text-xs font-semibold text-[var(--accent-primary)] whitespace-nowrap shrink-0 cursor-pointer"
                   >
                     <Plus className="h-3.5 w-3.5" strokeWidth={2.2} />
                     Add Member
@@ -1708,19 +2009,19 @@ export function AdminPanelScreen() {
                 </div>
 
                 {teamDraft.length === 0 ? (
-                  <div className="rounded-xl bg-[var(--bg-canvas)] border border-[var(--divider)] p-4 text-center text-xs text-[var(--text-secondary)]">
+                  <div className="py-6 text-center text-xs text-[var(--text-secondary)] border-t border-[var(--divider)]">
                     No team members added yet
                   </div>
                 ) : (
-                  <div className="space-y-3">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-4 border-t border-[var(--divider)]">
                     {teamDraft.map((member, idx) => (
                       <div
                         key={member.id}
-                        className="rounded-2xl bg-[var(--bg-canvas)] border border-[var(--divider)] p-4 space-y-3"
+                        className="pb-5 border-b border-[var(--divider)] space-y-3"
                       >
                         <div className="flex items-center justify-between gap-3">
                           <div className="flex items-center gap-3">
-                            <div className="h-14 w-12 shrink-0 overflow-hidden rounded-xl border border-[var(--divider)] bg-[var(--bg-subtle)] flex items-center justify-center">
+                            <div className="h-14 w-12 shrink-0 overflow-hidden rounded-xl border border-[var(--divider)] bg-[var(--bg-canvas)] flex items-center justify-center">
                               {member.image ? (
                                 <img
                                   src={member.image}
@@ -1732,7 +2033,7 @@ export function AdminPanelScreen() {
                                 <User className="h-5 w-5 text-[var(--text-secondary)] opacity-60" strokeWidth={1.75} />
                               )}
                             </div>
-                            <label className="inline-flex min-h-[36px] items-center gap-1.5 rounded-xl border border-[var(--divider)] bg-[var(--bg-card)] px-3 text-xs font-semibold text-[var(--text-primary)] hover:bg-[var(--bg-subtle)] transition-colors cursor-pointer">
+                            <label className="inline-flex min-h-[36px] items-center gap-1.5 rounded-xl border border-[var(--divider)] bg-[var(--bg-canvas)] px-3 text-xs font-semibold text-[var(--text-primary)] hover:bg-[var(--bg-subtle)] transition-colors cursor-pointer">
                               <ImagePlus className="h-3.5 w-3.5" />
                               <span>{member.image ? 'Change Photo' : 'Upload Photo'}</span>
                               <input
@@ -1760,7 +2061,7 @@ export function AdminPanelScreen() {
                               disabled={idx === 0}
                               onClick={() => handleMoveTeamMember(idx, -1)}
                               aria-label="Move up"
-                              className="min-h-[34px] min-w-[34px] flex items-center justify-center rounded-xl border border-[var(--divider)] bg-[var(--bg-card)] text-[var(--text-secondary)] disabled:opacity-35 cursor-pointer"
+                              className="min-h-[34px] min-w-[34px] flex items-center justify-center rounded-xl border border-[var(--divider)] bg-[var(--bg-canvas)] text-[var(--text-secondary)] disabled:opacity-35 cursor-pointer"
                             >
                               <ArrowUp className="h-3.5 w-3.5" strokeWidth={2} />
                             </button>
@@ -1769,7 +2070,7 @@ export function AdminPanelScreen() {
                               disabled={idx === teamDraft.length - 1}
                               onClick={() => handleMoveTeamMember(idx, 1)}
                               aria-label="Move down"
-                              className="min-h-[34px] min-w-[34px] flex items-center justify-center rounded-xl border border-[var(--divider)] bg-[var(--bg-card)] text-[var(--text-secondary)] disabled:opacity-35 cursor-pointer"
+                              className="min-h-[34px] min-w-[34px] flex items-center justify-center rounded-xl border border-[var(--divider)] bg-[var(--bg-canvas)] text-[var(--text-secondary)] disabled:opacity-35 cursor-pointer"
                             >
                               <ArrowDown className="h-3.5 w-3.5" strokeWidth={2} />
                             </button>
@@ -1798,7 +2099,7 @@ export function AdminPanelScreen() {
                             }}
                             placeholder="Member name"
                             aria-label="Member name"
-                            className="w-full min-h-[42px] rounded-xl bg-[var(--bg-card)] border border-[var(--divider)] px-3.5 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-primary)]"
+                            className="w-full min-h-[42px] rounded-xl bg-[var(--bg-canvas)] border border-[var(--divider)] px-3.5 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-primary)]"
                           />
                           <input
                             type="text"
@@ -1811,7 +2112,7 @@ export function AdminPanelScreen() {
                             }}
                             placeholder="Role / Title"
                             aria-label="Member role"
-                            className="w-full min-h-[42px] rounded-xl bg-[var(--bg-card)] border border-[var(--divider)] px-3.5 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-primary)]"
+                            className="w-full min-h-[42px] rounded-xl bg-[var(--bg-canvas)] border border-[var(--divider)] px-3.5 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-primary)]"
                           />
                         </div>
 
@@ -1827,7 +2128,7 @@ export function AdminPanelScreen() {
                           }}
                           placeholder="Photo URL (optional)"
                           aria-label="Member photo URL"
-                          className="w-full min-h-[42px] rounded-xl bg-[var(--bg-card)] border border-[var(--divider)] px-3.5 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-primary)]"
+                          className="w-full min-h-[42px] rounded-xl bg-[var(--bg-canvas)] border border-[var(--divider)] px-3.5 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-primary)]"
                         />
                       </div>
                     ))}
@@ -1851,7 +2152,7 @@ export function AdminPanelScreen() {
               <button
                 type="submit"
                 disabled={aboutSaving}
-                className="flex w-full min-h-[48px] items-center justify-center gap-2 rounded-xl bg-[var(--text-primary)] dark:bg-[var(--accent-primary)] text-sm font-semibold text-[var(--bg-card)] dark:text-[#171717] disabled:opacity-60 transition-opacity hover:opacity-90 cursor-pointer"
+                className="flex w-full sm:w-auto sm:min-w-[200px] min-h-[46px] items-center justify-center gap-2 rounded-xl bg-[var(--text-primary)] dark:bg-[var(--accent-primary)] px-6 text-sm font-semibold text-[var(--bg-card)] dark:text-[#171717] disabled:opacity-60 transition-opacity hover:opacity-90 cursor-pointer"
               >
                 {aboutSaving ? (
                   <>
@@ -1869,10 +2170,10 @@ export function AdminPanelScreen() {
               </button>
             </form>
           ) : (
-            <form onSubmit={handleSave} className="space-y-5">
-              <div className="rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] p-5 flex items-center justify-between gap-4">
+            <form onSubmit={handleSave} className="max-w-2xl space-y-5">
+              <div className="rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] p-5 sm:p-6 flex items-center justify-between gap-4">
                 <div>
-                  <p className="text-sm font-semibold">Enable Preview Mode</p>
+                  <h2 className="text-base font-semibold">Enable Preview Mode</h2>
                   <p className="text-xs text-[var(--text-secondary)] mt-0.5">
                     Guest and Free accounts can use Preview Mode until their timer expires.
                   </p>
@@ -1894,87 +2195,113 @@ export function AdminPanelScreen() {
                 </button>
               </div>
 
-              <div className="rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] p-5 space-y-4">
-                <p className="text-sm font-semibold">Trial Duration</p>
-
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                  <input
-                    type="number"
-                    min={0}
-                    max={3650}
-                    inputMode="numeric"
-                    value={days}
-                    onChange={(e) => setDays(e.target.value)}
-                    placeholder="Days"
-                    aria-label="Days"
-                    className="w-full min-h-[46px] rounded-xl bg-[var(--bg-canvas)] border border-[var(--divider)] px-3.5 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-primary)] tabular-nums"
-                  />
-                  <input
-                    type="number"
-                    min={0}
-                    max={23}
-                    inputMode="numeric"
-                    value={hours}
-                    onChange={(e) => setHours(e.target.value)}
-                    placeholder="Hours"
-                    aria-label="Hours"
-                    className="w-full min-h-[46px] rounded-xl bg-[var(--bg-canvas)] border border-[var(--divider)] px-3.5 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-primary)] tabular-nums"
-                  />
-                  <input
-                    type="number"
-                    min={0}
-                    max={59}
-                    inputMode="numeric"
-                    value={minutes}
-                    onChange={(e) => setMinutes(e.target.value)}
-                    placeholder="Minutes"
-                    aria-label="Minutes"
-                    className="w-full min-h-[46px] rounded-xl bg-[var(--bg-canvas)] border border-[var(--divider)] px-3.5 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-primary)] tabular-nums"
-                  />
-                  <input
-                    type="number"
-                    min={0}
-                    max={59}
-                    inputMode="numeric"
-                    value={seconds}
-                    onChange={(e) => setSeconds(e.target.value)}
-                    placeholder="Seconds"
-                    aria-label="Seconds"
-                    className="w-full min-h-[46px] rounded-xl bg-[var(--bg-canvas)] border border-[var(--divider)] px-3.5 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-primary)] tabular-nums"
-                  />
+              <div className="rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] p-5 sm:p-6 space-y-4">
+                <div>
+                  <p className="text-sm font-semibold">Trial Duration</p>
+                  <p className="text-xs text-[var(--text-secondary)] mt-0.5">
+                    Select the calendar date and clock time users can use Preview Mode for free.
+                  </p>
                 </div>
 
-                {previewSyncError && (
-                  <p className="text-xs text-[#E45B5B]">{previewSyncError}</p>
-                )}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="relative flex items-center">
+                    <Calendar
+                      className="pointer-events-none absolute left-3.5 h-4 w-4 text-[var(--text-secondary)]"
+                      strokeWidth={1.9}
+                    />
+                    <input
+                      ref={dateInputRef}
+                      type="date"
+                      value={endDate}
+                      onChange={(e) => setEndDate(e.target.value)}
+                      onClick={() => {
+                        try {
+                          dateInputRef.current?.showPicker?.();
+                        } catch {
+                          // Fallback to native focus behavior
+                        }
+                      }}
+                      aria-label="Trial end date"
+                      className="w-full min-h-[48px] rounded-xl bg-[var(--bg-canvas)] border border-[var(--divider)] pl-10 pr-3.5 text-sm font-medium text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent-primary)] tabular-nums cursor-pointer"
+                    />
+                  </div>
 
-                {previewJustSaved && !previewSyncError && (
-                  <div className="flex items-center gap-2 rounded-xl bg-[#2E7D32]/12 border border-[#2E7D32]/30 p-3 text-xs font-semibold text-[#2E7D32] dark:text-[#81C995]">
-                    <CheckCircle2 className="h-4 w-4 shrink-0" />
-                    Saved — Preview Timer updated
+                  <div className="relative flex items-center">
+                    <Clock
+                      className="pointer-events-none absolute left-3.5 h-4 w-4 text-[var(--text-secondary)]"
+                      strokeWidth={1.9}
+                    />
+                    <input
+                      ref={timeInputRef}
+                      type="time"
+                      value={endTime}
+                      onChange={(e) => setEndTime(e.target.value)}
+                      onClick={() => {
+                        try {
+                          timeInputRef.current?.showPicker?.();
+                        } catch {
+                          // Fallback to native focus behavior
+                        }
+                      }}
+                      aria-label="Trial end time"
+                      className="w-full min-h-[48px] rounded-xl bg-[var(--bg-canvas)] border border-[var(--divider)] pl-10 pr-3.5 text-sm font-medium text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent-primary)] tabular-nums cursor-pointer"
+                    />
+                  </div>
+                </div>
+
+                {draftTargetDate && (
+                  <div className="pt-3 border-t border-[var(--divider)] flex flex-wrap items-center justify-between gap-2 text-xs">
+                    <span className="text-[var(--text-secondary)]">
+                      Free until{' '}
+                      <span className="font-semibold text-[var(--text-primary)]">
+                        {formatCalendarTimeDisplay(draftTargetDate)}
+                      </span>
+                    </span>
+                    <span
+                      className={`font-semibold tabular-nums ${
+                        draftTargetDate.getTime() > clockTick
+                          ? 'text-[var(--accent-primary)]'
+                          : 'text-[#E45B5B]'
+                      }`}
+                    >
+                      {formatRemainingTime(draftTargetDate.getTime(), clockTick)}
+                    </span>
                   </div>
                 )}
-
-                <button
-                  type="submit"
-                  disabled={adminSaving}
-                  className="flex w-full min-h-[48px] items-center justify-center gap-2 rounded-xl bg-[var(--text-primary)] dark:bg-[var(--accent-primary)] text-sm font-semibold text-[var(--bg-card)] dark:text-[#171717] disabled:opacity-60 transition-opacity hover:opacity-90 cursor-pointer"
-                >
-                  {adminSaving ? (
-                    <>
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      Saving...
-                    </>
-                  ) : previewJustSaved ? (
-                    <>
-                      <CheckCircle2 className="h-4 w-4" />
-                      Saved
-                    </>
-                  ) : (
-                    'Save Preview Timer'
-                  )}
-                </button>
               </div>
+
+              {previewSyncError && (
+                <div className="rounded-2xl bg-[#E45B5B]/10 border border-[#E45B5B]/30 p-4 text-xs text-[#E45B5B]">
+                  {previewSyncError}
+                </div>
+              )}
+
+              {previewJustSaved && !previewSyncError && (
+                <div className="flex items-center gap-2 rounded-2xl bg-[#2E7D32]/12 border border-[#2E7D32]/30 p-3.5 text-xs font-semibold text-[#2E7D32] dark:text-[#81C995]">
+                  <CheckCircle2 className="h-4 w-4 shrink-0" />
+                  Saved — Preview Timer updated
+                </div>
+              )}
+
+              <button
+                type="submit"
+                disabled={adminSaving}
+                className="flex w-full sm:w-auto sm:min-w-[200px] min-h-[46px] items-center justify-center gap-2 rounded-xl bg-[var(--text-primary)] dark:bg-[var(--accent-primary)] px-6 text-sm font-semibold text-[var(--bg-card)] dark:text-[#171717] disabled:opacity-60 transition-opacity hover:opacity-90 cursor-pointer"
+              >
+                {adminSaving ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Saving...
+                  </>
+                ) : previewJustSaved ? (
+                  <>
+                    <CheckCircle2 className="h-4 w-4" />
+                    Saved
+                  </>
+                ) : (
+                  'Save Preview Timer'
+                )}
+              </button>
             </form>
           )}
         </main>

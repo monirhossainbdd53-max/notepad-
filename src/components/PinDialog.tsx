@@ -1,7 +1,6 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Crown, Delete, Fingerprint, Lock, X } from 'lucide-react';
-import { useBackHandler, useNotes } from '../context/NotesContext';
-import { verifyBiometricIdentity } from '../utils/biometricHelper';
+import React, { useEffect, useState } from 'react';
+import { Crown, Delete, Lock, X } from 'lucide-react';
+import { useBackHandler } from '../context/NotesContext';
 
 interface PinDialogProps {
   open: boolean;
@@ -22,52 +21,17 @@ export function PinDialog({
   onSuccess,
   onClose,
 }: PinDialogProps) {
-  const { biometricSupported, biometricLockEnabled, biometryLabel } = useNotes();
   const [digits, setDigits] = useState<string>('');
   const [firstPin, setFirstPin] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string>('');
-  const [biometricBusy, setBiometricBusy] = useState(false);
-  const autoTriggeredRef = useRef(false);
-
-  const canUseBiometric = mode === 'verify' && biometricSupported && biometricLockEnabled;
-
-  const triggerBiometric = useCallback(async () => {
-    if (!canUseBiometric || biometricBusy) return;
-    setBiometricBusy(true);
-    setErrorMsg('');
-    try {
-      const result = await verifyBiometricIdentity({
-        title: title || 'Locked Note',
-        subtitle: `Unlock with ${biometryLabel}`,
-      });
-      if (result.verified) {
-        onSuccess(expectedPin || '');
-        onClose();
-      } else if (!result.cancelled && result.errorMessage) {
-        setErrorMsg(result.errorMessage);
-      }
-    } finally {
-      setBiometricBusy(false);
-    }
-  }, [biometricBusy, biometryLabel, canUseBiometric, expectedPin, onClose, onSuccess, title]);
 
   useEffect(() => {
     if (open) {
       setDigits('');
       setFirstPin(null);
       setErrorMsg('');
-      if (canUseBiometric && !autoTriggeredRef.current) {
-        autoTriggeredRef.current = true;
-        const timer = window.setTimeout(() => {
-          void triggerBiometric();
-        }, 180);
-        return () => window.clearTimeout(timer);
-      }
-    } else {
-      autoTriggeredRef.current = false;
     }
-    return undefined;
-  }, [open, mode, canUseBiometric, triggerBiometric]);
+  }, [open, mode]);
 
   useBackHandler(open, onClose);
   if (!open) return null;
@@ -121,9 +85,7 @@ export function PinDialog({
   const displaySubtitle =
     subtitle ||
     (mode === 'verify'
-      ? canUseBiometric
-        ? `Enter PIN or use ${biometryLabel.toLowerCase()} to unlock`
-        : 'Enter your 4-digit PIN to view this note'
+      ? 'Enter your 4-digit PIN to view this note'
       : firstPin
       ? 'Re-enter your 4-digit PIN to confirm'
       : 'Choose a 4-digit PIN to protect locked notes');
@@ -192,22 +154,7 @@ export function PinDialog({
               {num}
             </button>
           ))}
-          {canUseBiometric ? (
-            <button
-              type="button"
-              disabled={biometricBusy}
-              onClick={() => {
-                void triggerBiometric();
-              }}
-              aria-label={`Unlock with ${biometryLabel}`}
-              title={`Unlock with ${biometryLabel}`}
-              className="min-h-[50px] flex items-center justify-center rounded-2xl bg-[var(--accent-soft)] text-[var(--accent-primary)] hover:opacity-90 active:scale-95 transition-all disabled:opacity-60 cursor-pointer"
-            >
-              <Fingerprint className="h-5 w-5" strokeWidth={1.9} />
-            </button>
-          ) : (
-            <div />
-          )}
+          <div />
           <button
             type="button"
             onClick={() => handleDigit('0')}

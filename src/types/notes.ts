@@ -29,6 +29,8 @@ export type NoteFontSize = 'small' | 'medium' | 'large';
 
 export type NoteSortOption = 'updated' | 'title' | 'pinned';
 
+export type NoteLockMethod = 'pin' | 'fingerprint' | null;
+
 export const FREE_LIMITS = {
   maxActiveNotes: 25,
   maxFolders: 4,
@@ -89,6 +91,7 @@ export interface PreviewModeConfig {
   hours: number;
   minutes: number;
   seconds: number;
+  expiresAt?: string;
   updatedAt: string;
   updatedBy?: string;
 }

@@ -19,15 +19,14 @@ import {
   X,
 } from 'lucide-react';
 import { ConfirmDialog, FolderPickerDialog, InfoSheetDialog } from '../components/ConfirmDialog';
+import { LockMethodDialog } from '../components/LockMethodDialog';
 import { NavigationShell } from '../components/NavigationShell';
 import { PinDialog } from '../components/PinDialog';
 import { useBackHandler, useNotes } from '../context/NotesContext';
 import { exportSingleNoteAsPdf } from '../utils/exportNotesZip';
 import { verifyBiometricIdentity } from '../utils/biometricHelper';
 import {
-  countWords,
   extractNoteImages,
-  formatFullDate,
   sanitizeNoteThemeHtml,
   stripHtmlToText,
   toggleChecklistItemInHtml,
@@ -100,11 +99,12 @@ export function NoteDetailsScreen() {
     toggleLockNote,
     notePin,
     setNotePin,
+    noteLockMethod,
+    enableFingerprintLock,
     unlockedNoteIds,
     unlockNoteSession,
     lockNoteSession,
     biometricSupported,
-    biometricLockEnabled,
     biometryLabel,
     canUseNoteLock,
     requestUpgrade,
@@ -126,6 +126,7 @@ export function NoteDetailsScreen() {
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
   const [pinVerifyOpen, setPinVerifyOpen] = useState(false);
   const [pinCreateOpen, setPinCreateOpen] = useState(false);
+  const [lockMethodOpen, setLockMethodOpen] = useState(false);
   const [findOpen, setFindOpen] = useState(false);
   const [findQuery, setFindQuery] = useState('');
   const [isBodySelecting, setIsBodySelecting] = useState(false);
@@ -216,8 +217,11 @@ export function NoteDetailsScreen() {
     );
   }
 
-  const requiresPinUnlock = Boolean(note.isLocked && notePin && !unlockedNoteIds.includes(note.id));
-  const canUseBiometricUnlock = biometricSupported && biometricLockEnabled;
+  const isLockConfigured =
+    noteLockMethod === 'fingerprint' || (noteLockMethod === 'pin' && Boolean(notePin));
+  const requiresPinUnlock = Boolean(
+    note.isLocked && isLockConfigured && !unlockedNoteIds.includes(note.id)
+  );
 
   const handleBiometricUnlock = async () => {
     if (biometricBusy) return;
@@ -229,11 +233,8 @@ export function NoteDetailsScreen() {
       });
       if (res.verified) {
         unlockNoteSession(note.id);
-      } else {
-        if (!res.cancelled && res.errorMessage) {
-          showToast(res.errorMessage, 'danger');
-        }
-        setPinVerifyOpen(true);
+      } else if (!res.cancelled && res.errorMessage) {
+        showToast(res.errorMessage, 'danger');
       }
     } finally {
       setBiometricBusy(false);
@@ -241,6 +242,8 @@ export function NoteDetailsScreen() {
   };
 
   if (requiresPinUnlock) {
+    const isFingerprintMode = noteLockMethod === 'fingerprint';
+
     return (
       <NavigationShell showMobileTabs={false}>
         <div className="min-h-screen flex flex-col bg-[var(--bg-canvas)]">
@@ -263,30 +266,35 @@ export function NoteDetailsScreen() {
               {note.title.trim() || 'Locked Note'}
             </h1>
             <p className="mt-1.5 text-sm text-[var(--text-secondary)] max-w-xs">
-              {canUseBiometricUnlock
-                ? `This note is protected. Use ${biometryLabel.toLowerCase()} or your 4-digit PIN to read or edit.`
+              {isFingerprintMode
+                ? biometricSupported
+                  ? `This note is locked. Verify with ${biometryLabel.toLowerCase()} to read or edit its contents.`
+                  : `${biometryLabel} is unavailable on this device. Switch to 4-Digit PIN in Settings.`
                 : 'This note is protected. Enter your 4-digit PIN to read or edit its contents.'}
             </p>
-            {canUseBiometricUnlock ? (
+            {isFingerprintMode ? (
               <div className="mt-6 flex flex-col items-center gap-2.5">
-                <button
-                  type="button"
-                  disabled={biometricBusy}
-                  onClick={() => {
-                    void handleBiometricUnlock();
-                  }}
-                  className="inline-flex items-center justify-center gap-2 min-h-[46px] rounded-full bg-[var(--text-primary)] dark:bg-[var(--accent-primary)] px-6 text-sm font-semibold text-[var(--bg-card)] dark:text-[#171717] disabled:opacity-60 cursor-pointer"
-                >
-                  <Fingerprint className="h-4.5 w-4.5" strokeWidth={2} />
-                  Unlock with {biometryLabel}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPinVerifyOpen(true)}
-                  className="min-h-[40px] rounded-full px-4 text-xs font-semibold text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
-                >
-                  Use 4-Digit PIN
-                </button>
+                {biometricSupported ? (
+                  <button
+                    type="button"
+                    disabled={biometricBusy}
+                    onClick={() => {
+                      void handleBiometricUnlock();
+                    }}
+                    className="inline-flex items-center justify-center gap-2 min-h-[46px] rounded-full bg-[var(--text-primary)] dark:bg-[var(--accent-primary)] px-6 text-sm font-semibold text-[var(--bg-card)] dark:text-[#171717] disabled:opacity-60 cursor-pointer"
+                  >
+                    <Fingerprint className="h-4.5 w-4.5" strokeWidth={2} />
+                    Unlock with {biometryLabel}
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => navigate('settings')}
+                    className="min-h-[46px] rounded-full bg-[var(--text-primary)] dark:bg-[var(--accent-primary)] px-6 text-sm font-semibold text-[var(--bg-card)] dark:text-[#171717] cursor-pointer"
+                  >
+                    Open Settings
+                  </button>
+                )}
               </div>
             ) : (
               <button
@@ -312,7 +320,6 @@ export function NoteDetailsScreen() {
   }
 
   const folder = getFolderById(note.folderId);
-  const words = countWords(note.content);
   const legacyImages = note.images ?? [];
 
   const handleContentClick = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -338,14 +345,39 @@ export function NoteDetailsScreen() {
   const handleToggleLock = () => {
     setMenuOpen(false);
     if (!canUseNoteLock) {
-      requestUpgrade('Secure Note Lock with 4-digit PIN is a Notes Premium feature.');
+      requestUpgrade('Secure Note Lock is a Notes Premium feature.');
       return;
     }
-    if (!notePin) {
-      setPinCreateOpen(true);
+    if (note.isLocked) {
+      toggleLockNote(note.id);
+      return;
+    }
+    if (!isLockConfigured) {
+      setLockMethodOpen(true);
       return;
     }
     toggleLockNote(note.id);
+  };
+
+  const handleSelectFingerprintSetup = async () => {
+    if (biometricBusy) return;
+    setBiometricBusy(true);
+    try {
+      const res = await verifyBiometricIdentity({
+        title: `Enable ${biometryLabel} Lock`,
+        subtitle: 'Confirm your identity',
+        reason: `Verify ${biometryLabel.toLowerCase()} to lock notes on this device`,
+      });
+      if (res.verified) {
+        enableFingerprintLock();
+        toggleLockNote(note.id);
+        setLockMethodOpen(false);
+      } else if (!res.cancelled && res.errorMessage) {
+        showToast(res.errorMessage, 'danger');
+      }
+    } finally {
+      setBiometricBusy(false);
+    }
   };
 
   const handleCopyNote = async () => {
@@ -600,19 +632,7 @@ export function NoteDetailsScreen() {
             {note.title.trim() || 'Untitled Note'}
           </h1>
 
-          <div className="mt-2.5 select-none flex flex-wrap items-center gap-2 text-xs text-[var(--text-secondary)] tabular-nums">
-            <span>{formatFullDate(note.updatedAt)}</span>
-            {folder && (
-              <>
-                <span aria-hidden="true">·</span>
-                <span>{folder.name}</span>
-              </>
-            )}
-            <span aria-hidden="true">·</span>
-            <span>{words} {words === 1 ? 'word' : 'words'}</span>
-          </div>
-
-          <div className="my-5 h-px bg-[var(--divider)]" />
+          <div className="my-4 h-px bg-[var(--divider)]" />
 
           <div
             ref={bodyRef}
@@ -746,6 +766,19 @@ export function NoteDetailsScreen() {
             navigate('home');
           }}
           onClose={() => setDeleteOpen(false)}
+        />
+
+        <LockMethodDialog
+          open={lockMethodOpen}
+          busy={biometricBusy}
+          onSelectFingerprint={() => {
+            void handleSelectFingerprintSetup();
+          }}
+          onSelectPin={() => {
+            setLockMethodOpen(false);
+            setPinCreateOpen(true);
+          }}
+          onClose={() => setLockMethodOpen(false)}
         />
 
         <PinDialog

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import {
   Bell,
   CalendarClock,
+  Check,
   CheckCircle2,
   ChevronRight,
   Cloud,
@@ -12,6 +13,7 @@ import {
   Fingerprint,
   HelpCircle,
   Info,
+  KeyRound,
   Loader2,
   Lock,
   Moon,
@@ -25,6 +27,7 @@ import { GoogleSignInButton } from '../components/GoogleSignInButton';
 import { NavigationShell } from '../components/NavigationShell';
 import { PinDialog } from '../components/PinDialog';
 import { useNotes } from '../context/NotesContext';
+import { verifyBiometricIdentity } from '../utils/biometricHelper';
 import { exportNotesAsPdfZip, exportNotesAsTextZip } from '../utils/exportNotesZip';
 import { formatFullDate } from '../utils/noteHelpers';
 
@@ -40,8 +43,9 @@ export function SettingsScreen() {
     isAdmin,
     notePin,
     setNotePin,
-    biometricLockEnabled,
-    setBiometricLockEnabled,
+    noteLockMethod,
+    enableFingerprintLock,
+    disableNoteLock,
     biometricSupported,
     biometryLabel,
     requestUpgrade,
@@ -76,6 +80,7 @@ export function SettingsScreen() {
   const [restoreStatusMsg, setRestoreStatusMsg] = useState<string | null>(null);
   const [pinDialogOpen, setPinDialogOpen] = useState(false);
   const [pinSheetOpen, setPinSheetOpen] = useState(false);
+  const [biometricBusy, setBiometricBusy] = useState(false);
   const [legalDoc, setLegalDoc] = useState<'privacy' | 'terms' | null>(null);
   const [avatarError, setAvatarError] = useState(false);
   const [exportingFormat, setExportingFormat] = useState<'txt' | 'pdf' | null>(null);
@@ -155,13 +160,32 @@ export function SettingsScreen() {
 
   const handleNotePinClick = () => {
     if (!canUseNoteLock) {
-      requestUpgrade('Secure Note Lock with 4-digit PIN is a Notes Premium feature.');
+      requestUpgrade('Secure Note Lock is a Notes Premium feature.');
       return;
     }
-    if (notePin) {
-      setPinSheetOpen(true);
-    } else {
-      setPinDialogOpen(true);
+    setPinSheetOpen(true);
+  };
+
+  const handleSelectFingerprintOption = async () => {
+    if (noteLockMethod === 'fingerprint' || biometricBusy) return;
+    if (!biometricSupported) {
+      showToast(`${biometryLabel} is not available on this device`, 'danger');
+      return;
+    }
+    setBiometricBusy(true);
+    try {
+      const res = await verifyBiometricIdentity({
+        title: `Enable ${biometryLabel} Unlock`,
+        subtitle: 'Confirm your identity',
+        reason: `Verify ${biometryLabel.toLowerCase()} to use it as your note lock`,
+      });
+      if (res.verified) {
+        enableFingerprintLock();
+      } else if (!res.cancelled && res.errorMessage) {
+        showToast(res.errorMessage, 'danger');
+      }
+    } finally {
+      setBiometricBusy(false);
     }
   };
 
@@ -250,16 +274,16 @@ export function SettingsScreen() {
             >
               <span className="flex items-center gap-3 text-sm font-medium">
                 <Lock className="h-4 w-4 text-[var(--text-secondary)]" strokeWidth={1.85} />
-                Note Lock PIN
+                Note Lock
               </span>
               <span className="flex items-center gap-1.5 text-xs text-[var(--text-secondary)]">
                 <span>
                   {!canUseNoteLock
                     ? 'Premium'
-                    : notePin
-                    ? biometricSupported && biometricLockEnabled
-                      ? `PIN · ${biometryLabel}`
-                      : 'Enabled'
+                    : noteLockMethod === 'fingerprint'
+                    ? biometryLabel
+                    : noteLockMethod === 'pin' && notePin
+                    ? '4-Digit PIN'
                     : 'Off'}
                 </span>
                 <ChevronRight className="h-4 w-4" strokeWidth={1.75} />
@@ -435,65 +459,95 @@ export function SettingsScreen() {
 
       <InfoSheetDialog
         open={pinSheetOpen}
-        title="Note Lock PIN"
+        title="Note Lock"
         onClose={() => setPinSheetOpen(false)}
       >
         <div className="space-y-3">
           <p className="text-sm text-[var(--text-secondary)]">
-            Your 4-digit PIN is active for protecting locked notes on this device.
+            Choose either {biometryLabel} Unlock or a 4-Digit PIN for your locked notes. You can switch anytime.
           </p>
-
-          {biometricSupported && (
-            <div className="flex items-center justify-between gap-3 rounded-xl bg-[var(--bg-canvas)] border border-[var(--divider)] px-3.5 py-3">
-              <div className="flex items-center gap-2.5 min-w-0">
-                <Fingerprint className="h-4 w-4 shrink-0 text-[var(--accent-primary)]" strokeWidth={1.9} />
-                <div className="min-w-0">
-                  <p className="text-sm font-medium text-[var(--text-primary)] truncate">
-                    {biometryLabel} Unlock
-                  </p>
-                  <p className="text-xs text-[var(--text-secondary)] truncate">
-                    Unlock locked notes without typing PIN
-                  </p>
-                </div>
-              </div>
-              <button
-                type="button"
-                role="switch"
-                aria-checked={biometricLockEnabled}
-                onClick={() => setBiometricLockEnabled(!biometricLockEnabled)}
-                className={`relative h-7 w-12 shrink-0 rounded-full transition-colors cursor-pointer ${
-                  biometricLockEnabled ? 'bg-[var(--accent-primary)]' : 'bg-[var(--divider)]'
-                }`}
-              >
-                <span
-                  className={`absolute top-1 left-1 h-5 w-5 rounded-full bg-white transition-transform ${
-                    biometricLockEnabled ? 'translate-x-5' : 'translate-x-0'
-                  }`}
-                />
-              </button>
-            </div>
-          )}
 
           <button
             type="button"
+            disabled={!biometricSupported || biometricBusy}
+            onClick={() => {
+              void handleSelectFingerprintOption();
+            }}
+            className={`flex w-full items-center justify-between gap-3 rounded-2xl border px-4 py-3.5 text-left transition-colors cursor-pointer disabled:opacity-55 disabled:cursor-not-allowed ${
+              noteLockMethod === 'fingerprint'
+                ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)]/50'
+                : 'border-[var(--divider)] bg-[var(--bg-canvas)] hover:border-[var(--accent-primary)]/60'
+            }`}
+          >
+            <span className="flex items-center gap-3 min-w-0">
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[var(--accent-soft)] text-[var(--accent-primary)]">
+                <Fingerprint className="h-5 w-5" strokeWidth={1.9} />
+              </span>
+              <span className="min-w-0">
+                <span className="block text-sm font-semibold text-[var(--text-primary)]">
+                  {biometryLabel} Unlock
+                </span>
+                <span className="block text-xs text-[var(--text-secondary)] truncate">
+                  {biometricSupported
+                    ? 'Unlock notes using your phone sensor'
+                    : 'Available on mobile devices with fingerprint'}
+                </span>
+              </span>
+            </span>
+            {noteLockMethod === 'fingerprint' && (
+              <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--accent-primary)] text-white dark:text-[#171717]">
+                <Check className="h-3.5 w-3.5" strokeWidth={2.5} />
+              </span>
+            )}
+          </button>
+
+          <button
+            type="button"
+            disabled={biometricBusy}
             onClick={() => {
               setPinSheetOpen(false);
               setPinDialogOpen(true);
             }}
-            className="w-full min-h-[44px] rounded-xl bg-[var(--text-primary)] dark:bg-[var(--accent-primary)] text-sm font-semibold text-[var(--bg-card)] dark:text-[#171717] cursor-pointer"
+            className={`flex w-full items-center justify-between gap-3 rounded-2xl border px-4 py-3.5 text-left transition-colors cursor-pointer disabled:opacity-60 ${
+              noteLockMethod === 'pin' && notePin
+                ? 'border-[var(--accent-primary)] bg-[var(--accent-soft)]/50'
+                : 'border-[var(--divider)] bg-[var(--bg-canvas)] hover:border-[var(--accent-primary)]/60'
+            }`}
           >
-            Change 4-Digit PIN
+            <span className="flex items-center gap-3 min-w-0">
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[var(--accent-soft)] text-[var(--accent-primary)]">
+                <KeyRound className="h-5 w-5" strokeWidth={1.9} />
+              </span>
+              <span className="min-w-0">
+                <span className="block text-sm font-semibold text-[var(--text-primary)]">
+                  4-Digit PIN
+                </span>
+                <span className="block text-xs text-[var(--text-secondary)] truncate">
+                  {noteLockMethod === 'pin' && notePin
+                    ? 'Active · Tap to change PIN'
+                    : 'Unlock notes with a 4-digit passcode'}
+                </span>
+              </span>
+            </span>
+            {noteLockMethod === 'pin' && notePin && (
+              <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--accent-primary)] text-white dark:text-[#171717]">
+                <Check className="h-3.5 w-3.5" strokeWidth={2.5} />
+              </span>
+            )}
           </button>
-          <button
-            type="button"
-            onClick={() => {
-              setNotePin(null);
-              setPinSheetOpen(false);
-            }}
-            className="w-full min-h-[44px] rounded-xl bg-[#E45B5B]/10 text-sm font-semibold text-[#E45B5B] cursor-pointer"
-          >
-            Remove PIN & Unlock All Notes
-          </button>
+
+          {noteLockMethod && (
+            <button
+              type="button"
+              onClick={() => {
+                disableNoteLock();
+                setPinSheetOpen(false);
+              }}
+              className="w-full min-h-[44px] rounded-xl bg-[#E45B5B]/10 text-sm font-semibold text-[#E45B5B] cursor-pointer"
+            >
+              Turn Off Lock & Unlock All Notes
+            </button>
+          )}
         </div>
       </InfoSheetDialog>
 

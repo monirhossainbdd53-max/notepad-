@@ -17,6 +17,7 @@ import {
   Folder,
   Note,
   NoteFontSize,
+  NoteLockMethod,
   NotificationSettings,
   PreviewModeConfig,
   ScreenName,
@@ -49,7 +50,7 @@ import {
 import {
   DEFAULT_PREVIEW_CONFIG,
   FirestoreSyncState,
-  getPreviewDurationMs,
+  getPreviewExpiresAtMs,
   isAdminAccount,
   loadCachedPreviewConfig,
   savePreviewModeConfig,
@@ -83,7 +84,7 @@ interface PersistedState {
   noteFontSize: NoteFontSize;
   isPremium: boolean;
   notePin: string | null;
-  biometricLockEnabled: boolean;
+  noteLockMethod: NoteLockMethod;
   defaultFolderId: string;
   notifications: NotificationSettings;
   account: UserAccount;
@@ -145,7 +146,10 @@ interface NotesContextValue {
   isAdmin: boolean;
   adminSaving: boolean;
   updateAdminPreviewConfig: (
-    next: Pick<PreviewModeConfig, 'enabled' | 'days' | 'hours' | 'minutes' | 'seconds'>
+    next: Pick<
+      PreviewModeConfig,
+      'enabled' | 'days' | 'hours' | 'minutes' | 'seconds' | 'expiresAt'
+    >
   ) => Promise<boolean>;
   aboutConfig: AboutAppConfig;
   aboutSyncState: FirestoreSyncState;
@@ -179,8 +183,9 @@ interface NotesContextValue {
   dismissUpgradePrompt: () => void;
   notePin: string | null;
   setNotePin: (pin: string | null) => void;
-  biometricLockEnabled: boolean;
-  setBiometricLockEnabled: (enabled: boolean) => void;
+  noteLockMethod: NoteLockMethod;
+  enableFingerprintLock: () => void;
+  disableNoteLock: () => void;
   biometricSupported: boolean;
   biometryLabel: string;
   unlockedNoteIds: string[];
@@ -242,7 +247,7 @@ const defaultPersistedState: PersistedState = {
   noteFontSize: 'medium',
   isPremium: false,
   notePin: null,
-  biometricLockEnabled: true,
+  noteLockMethod: null,
   defaultFolderId: '',
   notifications: {
     dailyReminder: false,
@@ -316,8 +321,14 @@ function loadInitialState(): PersistedState {
           : 'medium',
       isPremium: Boolean(parsed.isPremium),
       notePin: typeof parsed.notePin === 'string' ? parsed.notePin : null,
-      biometricLockEnabled:
-        typeof parsed.biometricLockEnabled === 'boolean' ? parsed.biometricLockEnabled : true,
+      noteLockMethod:
+        parsed.noteLockMethod === 'pin' || parsed.noteLockMethod === 'fingerprint'
+          ? parsed.noteLockMethod
+          : parsed.noteLockMethod === null
+          ? null
+          : typeof parsed.notePin === 'string' && parsed.notePin
+          ? 'pin'
+          : null,
       defaultFolderId: typeof parsed.defaultFolderId === 'string' ? parsed.defaultFolderId : '',
       notifications: {
         ...defaultPersistedState.notifications,
@@ -385,8 +396,8 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   const [noteFontSize, setNoteFontSizeState] = useState<NoteFontSize>(initial.noteFontSize);
   const [isPremium, setIsPremiumState] = useState<boolean>(initial.isPremium);
   const [notePin, setNotePinState] = useState<string | null>(initial.notePin);
-  const [biometricLockEnabled, setBiometricLockEnabledState] = useState<boolean>(
-    initial.biometricLockEnabled
+  const [noteLockMethod, setNoteLockMethodState] = useState<NoteLockMethod>(
+    initial.noteLockMethod
   );
   const [biometricSupported, setBiometricSupported] = useState<boolean>(false);
   const [biometryLabel, setBiometryLabel] = useState<string>('Fingerprint');
@@ -465,7 +476,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         noteFontSize,
         isPremium,
         notePin,
-        biometricLockEnabled,
+        noteLockMethod,
         defaultFolderId,
         notifications,
         account,
@@ -487,7 +498,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     noteFontSize,
     isPremium,
     notePin,
-    biometricLockEnabled,
+    noteLockMethod,
     defaultFolderId,
     notifications,
     account,
@@ -638,20 +649,19 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     return Number.isFinite(expiry) && expiry > nowMs;
   }, [account.lastTransactionId, account.premiumExpiresAt, nowMs]);
 
-  const previewDurationMs = useMemo(
-    () => getPreviewDurationMs(previewConfig),
-    [previewConfig]
+  const previewExpiresAtMs = useMemo(
+    () => getPreviewExpiresAtMs(previewConfig, previewStartedAt),
+    [previewConfig, previewStartedAt]
   );
 
   const isPreviewAvailable = useMemo(() => {
-    if (!previewConfig.enabled || previewDurationMs <= 0) return false;
-    return nowMs < previewStartedAt + previewDurationMs;
-  }, [nowMs, previewConfig.enabled, previewDurationMs, previewStartedAt]);
+    if (!previewConfig.enabled || previewExpiresAtMs <= 0) return false;
+    return nowMs < previewExpiresAtMs;
+  }, [nowMs, previewConfig.enabled, previewExpiresAtMs]);
 
   useEffect(() => {
-    if (!previewConfig.enabled || previewDurationMs <= 0) return;
-    const expiresAt = previewStartedAt + previewDurationMs;
-    const remaining = expiresAt - Date.now();
+    if (!previewConfig.enabled || previewExpiresAtMs <= 0) return;
+    const remaining = previewExpiresAtMs - Date.now();
     if (remaining <= 0) {
       setNowMs(Date.now());
       return;
@@ -670,7 +680,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       window.clearTimeout(timer);
       document.removeEventListener('visibilitychange', handleVisibility);
     };
-  }, [previewConfig.enabled, previewDurationMs, previewStartedAt, nowMs]);
+  }, [previewConfig.enabled, previewExpiresAtMs, nowMs]);
 
   useEffect(() => {
     if (isPremium && !isPreviewAvailable && !hasPaidSubscription) {
@@ -1216,7 +1226,10 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
 
   const updateAdminPreviewConfig = useCallback(
     async (
-      next: Pick<PreviewModeConfig, 'enabled' | 'days' | 'hours' | 'minutes' | 'seconds'>
+      next: Pick<
+        PreviewModeConfig,
+        'enabled' | 'days' | 'hours' | 'minutes' | 'seconds' | 'expiresAt'
+      >
     ): Promise<boolean> => {
       if (!isAdmin) {
         showToast('Admin access required', 'danger');
@@ -1330,22 +1343,31 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     (pin: string | null) => {
       setNotePinState(pin);
       if (pin) {
-        showToast('Note Lock PIN saved');
+        setNoteLockMethodState('pin');
+        showToast('4-Digit PIN lock saved');
       } else {
+        setNoteLockMethodState(null);
         setNotes((prev) => prev.map((n) => ({ ...n, isLocked: false })));
-        showToast('Note Lock PIN removed');
+        setUnlockedNoteIds([]);
+        showToast('Note lock turned off');
       }
     },
     [showToast]
   );
 
-  const setBiometricLockEnabled = useCallback(
-    (enabled: boolean) => {
-      setBiometricLockEnabledState(enabled);
-      showToast(enabled ? `${biometryLabel} unlock enabled` : `${biometryLabel} unlock turned off`);
-    },
-    [biometryLabel, showToast]
-  );
+  const enableFingerprintLock = useCallback(() => {
+    setNotePinState(null);
+    setNoteLockMethodState('fingerprint');
+    showToast(`${biometryLabel} lock enabled`);
+  }, [biometryLabel, showToast]);
+
+  const disableNoteLock = useCallback(() => {
+    setNoteLockMethodState(null);
+    setNotePinState(null);
+    setNotes((prev) => prev.map((n) => ({ ...n, isLocked: false })));
+    setUnlockedNoteIds([]);
+    showToast('Note lock turned off');
+  }, [showToast]);
 
   const unlockNoteSession = useCallback((noteId: string) => {
     setUnlockedNoteIds((prev) => (prev.includes(noteId) ? prev : [...prev, noteId]));
@@ -1358,7 +1380,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   const toggleLockNote = useCallback(
     (noteId: string) => {
       if (!canUseNoteLock) {
-        requestUpgrade('Secure Note Lock with 4-digit PIN is a Notes Premium feature.');
+        requestUpgrade('Secure Note Lock is a Notes Premium feature.');
         return;
       }
       setNotes((prev) =>
@@ -1370,12 +1392,18 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
           } else {
             setUnlockedNoteIds((u) => (u.includes(noteId) ? u : [...u, noteId]));
           }
-          showToast(nextLocked ? 'Note locked with PIN' : 'Note lock removed');
+          showToast(
+            nextLocked
+              ? noteLockMethod === 'fingerprint'
+                ? `Note locked with ${biometryLabel}`
+                : 'Note locked with PIN'
+              : 'Note lock removed'
+          );
           return { ...n, isLocked: nextLocked };
         })
       );
     },
-    [canUseNoteLock, requestUpgrade, showToast]
+    [biometryLabel, canUseNoteLock, noteLockMethod, requestUpgrade, showToast]
   );
 
   const setDefaultFolderId = useCallback(
@@ -1721,7 +1749,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     setDefaultFolderIdState('');
     setPaletteState('default');
     setNotePinState(null);
-    setBiometricLockEnabledState(true);
+    setNoteLockMethodState(null);
     setUnlockedNoteIds([]);
     showToast('Workspace cleared');
   }, [showToast]);
@@ -1822,8 +1850,9 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     dismissUpgradePrompt,
     notePin,
     setNotePin,
-    biometricLockEnabled,
-    setBiometricLockEnabled,
+    noteLockMethod,
+    enableFingerprintLock,
+    disableNoteLock,
     biometricSupported,
     biometryLabel,
     unlockedNoteIds,

@@ -1599,7 +1599,9 @@ export function RichTextEditor({
           }`}
         />
 
-        <div ref={editorWrapperRef} className="relative mt-4">
+        <div className="my-4 h-px bg-[var(--divider)]" />
+
+        <div ref={editorWrapperRef} className="relative">
           {dropIndicatorTop !== null && (
             <div
               aria-hidden="true"

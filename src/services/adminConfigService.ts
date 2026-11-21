@@ -11,6 +11,7 @@ export const DEFAULT_PREVIEW_CONFIG: PreviewModeConfig = {
   hours: 0,
   minutes: 0,
   seconds: 0,
+  expiresAt: '',
   updatedAt: '',
 };
 
@@ -31,12 +32,21 @@ export function normalizePreviewConfig(raw: Partial<PreviewModeConfig> | null | 
     return Math.min(max, Math.floor(num));
   };
 
+  let normalizedExpiresAt = '';
+  if (typeof raw?.expiresAt === 'string' && raw.expiresAt.trim()) {
+    const parsed = new Date(raw.expiresAt);
+    if (Number.isFinite(parsed.getTime())) {
+      normalizedExpiresAt = parsed.toISOString();
+    }
+  }
+
   return {
     enabled: typeof raw?.enabled === 'boolean' ? raw.enabled : DEFAULT_PREVIEW_CONFIG.enabled,
     days: clampInt(raw?.days, DEFAULT_PREVIEW_CONFIG.days, 3650),
     hours: clampInt(raw?.hours, DEFAULT_PREVIEW_CONFIG.hours, 23),
     minutes: clampInt(raw?.minutes, DEFAULT_PREVIEW_CONFIG.minutes, 59),
     seconds: clampInt(raw?.seconds, DEFAULT_PREVIEW_CONFIG.seconds, 59),
+    expiresAt: normalizedExpiresAt,
     updatedAt: typeof raw?.updatedAt === 'string' ? raw.updatedAt : '',
     updatedBy: typeof raw?.updatedBy === 'string' ? raw.updatedBy : undefined,
   };
@@ -48,6 +58,21 @@ export function getPreviewDurationMs(config: PreviewModeConfig): number {
   const m = Math.max(0, Math.floor(config.minutes || 0));
   const s = Math.max(0, Math.floor(config.seconds || 0));
   return (d * 86400 + h * 3600 + m * 60 + s) * 1000;
+}
+
+export function getPreviewExpiresAtMs(
+  config: PreviewModeConfig,
+  startedAtMs: number
+): number {
+  if (config.expiresAt) {
+    const parsed = new Date(config.expiresAt).getTime();
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return parsed;
+    }
+  }
+  const durationMs = getPreviewDurationMs(config);
+  if (durationMs <= 0) return 0;
+  return startedAtMs + durationMs;
 }
 
 export function loadCachedPreviewConfig(): PreviewModeConfig {
@@ -105,7 +130,10 @@ export function subscribePreviewModeConfig(
 }
 
 export async function savePreviewModeConfig(
-  next: Pick<PreviewModeConfig, 'enabled' | 'days' | 'hours' | 'minutes' | 'seconds'>
+  next: Pick<
+    PreviewModeConfig,
+    'enabled' | 'days' | 'hours' | 'minutes' | 'seconds' | 'expiresAt'
+  >
 ): Promise<PreviewModeConfig> {
   if (!isFirebaseConfigured || !db || !auth?.currentUser) {
     throw new Error('Sign in with your admin Google account first.');
