@@ -1,7 +1,16 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
+import { App as CapacitorApp } from '@capacitor/app';
+import { Capacitor } from '@capacitor/core';
 import { CheckCircle2, AlertCircle } from 'lucide-react';
+import { AppUpdateDialog } from './components/AppUpdateDialog';
 import { UpgradePromptDialog } from './components/PinDialog';
 import { NotesProvider, useNotes } from './context/NotesContext';
+import {
+  AppUpdateInfo,
+  checkForGitHubApkUpdate,
+  dismissAppUpdateVersion,
+  markApkVersionDownloaded,
+} from './services/appUpdateService';
 import { SplashScreen } from './screens/SplashScreen';
 import { OnboardingScreen } from './screens/OnboardingScreen';
 import { NotesHomeScreen } from './screens/NotesHomeScreen';
@@ -32,6 +41,38 @@ function ScreenRouter() {
     dismissUpgradePrompt,
     navigate,
   } = useNotes();
+
+  const [updateInfo, setUpdateInfo] = useState<AppUpdateInfo | null>(null);
+
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform() || Capacitor.getPlatform() !== 'android') {
+      return;
+    }
+
+    let cancelled = false;
+    const runCheck = async () => {
+      const info = await checkForGitHubApkUpdate();
+      if (!cancelled && info) {
+        setUpdateInfo(info);
+      }
+    };
+
+    const timer = window.setTimeout(() => {
+      void runCheck();
+    }, 1500);
+
+    const listenerPromise = CapacitorApp.addListener('appStateChange', ({ isActive }) => {
+      if (isActive) {
+        void runCheck();
+      }
+    });
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+      void listenerPromise.then((handle) => handle.remove()).catch(() => {});
+    };
+  }, []);
 
   const renderScreen = () => {
     switch (screen) {
@@ -91,6 +132,24 @@ function ScreenRouter() {
         onUpgrade={() => navigate('premium')}
         onClose={dismissUpgradePrompt}
       />
+
+      {screen !== 'splash' && (
+        <AppUpdateDialog
+          updateInfo={updateInfo}
+          onDismiss={() => {
+            if (updateInfo) {
+              dismissAppUpdateVersion(updateInfo.latestVersion);
+            }
+            setUpdateInfo(null);
+          }}
+          onDownload={() => {
+            if (updateInfo) {
+              markApkVersionDownloaded(updateInfo.latestVersion);
+            }
+            setUpdateInfo(null);
+          }}
+        />
+      )}
 
       {toast && (
         <div

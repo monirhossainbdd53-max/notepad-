@@ -47,6 +47,7 @@ jobs:
       - name: Build web app
         env:
           VITE_APP_VERSION: 1.0.${{ github.run_number }}
+          VITE_GITHUB_REPO: ${{ github.repository }}
         run: npm run build
 
       - name: Add Android platform
