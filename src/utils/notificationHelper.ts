@@ -133,3 +133,74 @@ export async function syncLocalNotifications(
 
   return { permissionGranted: true };
 }
+
+export const APP_UPDATE_NOTIFICATION_ID = 2001;
+const UPDATE_CHANNEL_ID = 'notes_app_updates';
+
+async function ensureUpdateChannel(): Promise<void> {
+  if (!isNativePlatform()) return;
+  try {
+    await LocalNotifications.createChannel({
+      id: UPDATE_CHANNEL_ID,
+      name: 'App Updates',
+      description: 'Notifications when a new version of Notes is available',
+      importance: 4,
+      visibility: 1,
+    });
+  } catch {
+    // Ignore channel errors on unsupported platforms
+  }
+}
+
+export async function notifyAppUpdateStatusBar(
+  latestVersion: string,
+  downloadUrl: string
+): Promise<boolean> {
+  if (!isNativePlatform()) return false;
+  try {
+    const current = await LocalNotifications.checkPermissions();
+    let granted = current.display === 'granted';
+    if (!granted) {
+      const req = await LocalNotifications.requestPermissions();
+      granted = req.display === 'granted';
+    }
+    if (!granted) return false;
+
+    await ensureUpdateChannel();
+    await LocalNotifications.cancel({
+      notifications: [{ id: APP_UPDATE_NOTIFICATION_ID }],
+    });
+    await LocalNotifications.schedule({
+      notifications: [
+        {
+          id: APP_UPDATE_NOTIFICATION_ID,
+          title: `Notes Update Available (v${latestVersion})`,
+          body: 'A new APK version is ready to download. Tap to update.',
+          channelId: UPDATE_CHANNEL_ID,
+          extra: {
+            type: 'app_update',
+            version: latestVersion,
+            downloadUrl,
+          },
+        },
+      ],
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function clearAppUpdateStatusBarNotification(): Promise<void> {
+  if (!isNativePlatform()) return;
+  try {
+    await LocalNotifications.cancel({
+      notifications: [{ id: APP_UPDATE_NOTIFICATION_ID }],
+    });
+    await LocalNotifications.removeDeliveredNotificationsById({
+      ids: [APP_UPDATE_NOTIFICATION_ID],
+    });
+  } catch {
+    // Ignore cleanup errors
+  }
+}

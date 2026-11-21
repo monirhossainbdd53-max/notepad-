@@ -1,11 +1,16 @@
 import { App } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
+import {
+  clearAppUpdateStatusBarNotification,
+  notifyAppUpdateStatusBar,
+} from '../utils/notificationHelper';
 
 const DISMISSED_VERSION_KEY = 'notes_dismissed_apk_version_v1';
 const DOWNLOADED_VERSION_KEY = 'notes_downloaded_apk_version_v1';
+const NOTIFIED_VERSION_KEY = 'notes_notified_apk_version_v1';
 const LATEST_RELEASE_KEY = 'notes_latest_apk_release_v1';
 const LAST_CHECK_AT_KEY = 'notes_apk_update_last_check_v1';
-const CHECK_THROTTLE_MS = 15 * 60 * 1000;
+const CHECK_THROTTLE_MS = 15 * 1000;
 export const APP_UPDATE_STATE_EVENT = 'notes-app-update-state-changed';
 
 export interface AppUpdateInfo {
@@ -73,6 +78,7 @@ export function dismissAppUpdateVersion(version: string): void {
   try {
     localStorage.setItem(DISMISSED_VERSION_KEY, normalizeVersion(version));
     emitUpdateStateChange();
+    void clearAppUpdateStatusBarNotification();
   } catch {
     // Ignore storage errors
   }
@@ -84,6 +90,7 @@ export function markApkVersionDownloaded(version: string): void {
     localStorage.setItem(DOWNLOADED_VERSION_KEY, normalized);
     localStorage.setItem(DISMISSED_VERSION_KEY, normalized);
     emitUpdateStateChange();
+    void clearAppUpdateStatusBarNotification();
   } catch {
     // Ignore storage errors
   }
@@ -140,6 +147,24 @@ export function getAboutAppUpdateState(currentVersion: string): AboutAppUpdateSt
   }
 }
 
+export function getCachedUpdateInfo(): AppUpdateInfo | null {
+  try {
+    const raw = localStorage.getItem(LATEST_RELEASE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<AppUpdateInfo>;
+    if (!parsed.latestVersion || !parsed.downloadUrl) return null;
+    return {
+      latestVersion: normalizeVersion(parsed.latestVersion),
+      currentVersion: normalizeVersion(parsed.currentVersion || '1.0.0'),
+      downloadUrl: parsed.downloadUrl,
+      releasePageUrl: parsed.releasePageUrl || parsed.downloadUrl,
+      releaseNotes: parsed.releaseNotes || '',
+    };
+  } catch {
+    return null;
+  }
+}
+
 export async function checkForGitHubApkUpdate(force = false): Promise<AppUpdateInfo | null> {
   try {
     if (!Capacitor.isNativePlatform() || Capacitor.getPlatform() !== 'android') {
@@ -163,8 +188,6 @@ export async function checkForGitHubApkUpdate(force = false): Promise<AppUpdateI
       return null;
     }
 
-    localStorage.setItem(LAST_CHECK_AT_KEY, String(Date.now()));
-
     const res = await fetch(`https://api.github.com/repos/${repo}/releases/latest`, {
       headers: {
         Accept: 'application/vnd.github+json',
@@ -173,6 +196,8 @@ export async function checkForGitHubApkUpdate(force = false): Promise<AppUpdateI
     });
 
     if (!res.ok) return null;
+
+    localStorage.setItem(LAST_CHECK_AT_KEY, String(Date.now()));
 
     const release = (await res.json()) as {
       tag_name?: string;
@@ -193,6 +218,7 @@ export async function checkForGitHubApkUpdate(force = false): Promise<AppUpdateI
 
     if (compareVersions(latestVersion, currentVersion) <= 0) {
       clearLatestReleaseCache();
+      void clearAppUpdateStatusBarNotification();
       return null;
     }
 
@@ -218,6 +244,25 @@ export async function checkForGitHubApkUpdate(force = false): Promise<AppUpdateI
     saveLatestReleaseCache(updateInfo);
 
     const dismissed = normalizeVersion(localStorage.getItem(DISMISSED_VERSION_KEY) || '');
+    const downloaded = normalizeVersion(localStorage.getItem(DOWNLOADED_VERSION_KEY) || '');
+    const notified = normalizeVersion(localStorage.getItem(NOTIFIED_VERSION_KEY) || '');
+
+    if (
+      dismissed !== latestVersion &&
+      downloaded !== latestVersion &&
+      notified !== latestVersion
+    ) {
+      void notifyAppUpdateStatusBar(latestVersion, downloadUrl).then((sent) => {
+        if (sent) {
+          try {
+            localStorage.setItem(NOTIFIED_VERSION_KEY, latestVersion);
+          } catch {
+            // Ignore storage errors
+          }
+        }
+      });
+    }
+
     if (!force && dismissed && dismissed === latestVersion) {
       return null;
     }

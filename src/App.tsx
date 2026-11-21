@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { App as CapacitorApp } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
+import { LocalNotifications } from '@capacitor/local-notifications';
 import { CheckCircle2, AlertCircle } from 'lucide-react';
 import { AppUpdateDialog } from './components/AppUpdateDialog';
 import { UpgradePromptDialog } from './components/PinDialog';
@@ -9,8 +10,10 @@ import {
   AppUpdateInfo,
   checkForGitHubApkUpdate,
   dismissAppUpdateVersion,
+  getCachedUpdateInfo,
   markApkVersionDownloaded,
 } from './services/appUpdateService';
+import { APP_UPDATE_NOTIFICATION_ID } from './utils/notificationHelper';
 import { SplashScreen } from './screens/SplashScreen';
 import { OnboardingScreen } from './screens/OnboardingScreen';
 import { NotesHomeScreen } from './screens/NotesHomeScreen';
@@ -50,27 +53,50 @@ function ScreenRouter() {
     }
 
     let cancelled = false;
-    const runCheck = async () => {
-      const info = await checkForGitHubApkUpdate();
+    const runCheck = async (force = false) => {
+      const info = await checkForGitHubApkUpdate(force);
       if (!cancelled && info) {
         setUpdateInfo(info);
       }
     };
 
     const timer = window.setTimeout(() => {
-      void runCheck();
-    }, 1500);
+      void runCheck(true);
+    }, 800);
 
     const listenerPromise = CapacitorApp.addListener('appStateChange', ({ isActive }) => {
       if (isActive) {
-        void runCheck();
+        void runCheck(false);
       }
     });
+
+    const notifListenerPromise = LocalNotifications.addListener(
+      'localNotificationActionPerformed',
+      (event) => {
+        const isUpdateNotif =
+          event?.notification?.id === APP_UPDATE_NOTIFICATION_ID ||
+          event?.notification?.extra?.type === 'app_update';
+        if (!isUpdateNotif) return;
+
+        void checkForGitHubApkUpdate(true).then((fresh) => {
+          if (cancelled) return;
+          if (fresh) {
+            setUpdateInfo(fresh);
+            return;
+          }
+          const cached = getCachedUpdateInfo();
+          if (cached) {
+            setUpdateInfo(cached);
+          }
+        });
+      }
+    );
 
     return () => {
       cancelled = true;
       window.clearTimeout(timer);
       void listenerPromise.then((handle) => handle.remove()).catch(() => {});
+      void notifListenerPromise.then((handle) => handle.remove()).catch(() => {});
     };
   }, []);
 
