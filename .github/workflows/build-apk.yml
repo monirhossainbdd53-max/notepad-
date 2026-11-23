@@ -88,7 +88,10 @@ jobs:
             }
             fs.writeFileSync(gradlePropsPath, props);
           '
-          mkdir -p android/app/src/main/res/values android/app/src/main/res/values-night android/app/src/main/res/drawable
+          mkdir -p android/app/src/main/res/values android/app/src/main/res/values-night android/app/src/main/res/drawable android/app/src/main/res/drawable-xxhdpi
+          if [ -f "public/assets/aistudio/Applogo.png" ]; then
+            cp "public/assets/aistudio/Applogo.png" android/app/src/main/res/drawable-xxhdpi/splash_logo.png
+          fi
           cat <<'EOF' > android/app/src/main/res/values/colors.xml
           <?xml version="1.0" encoding="utf-8"?>
           <resources>
@@ -110,7 +113,7 @@ jobs:
               <item>
                   <bitmap
                       android:gravity="center"
-                      android:src="@mipmap/ic_launcher" />
+                      android:src="@drawable/splash_logo" />
               </item>
           </layer-list>
           EOF
@@ -169,11 +172,8 @@ jobs:
           package com.riyad.notes;
 
           import android.content.Intent;
-          import android.graphics.Color;
           import android.os.Bundle;
           import android.util.Log;
-          import android.view.animation.DecelerateInterpolator;
-          import android.webkit.WebView;
           import com.getcapacitor.BridgeActivity;
           import com.getcapacitor.Plugin;
           import com.getcapacitor.PluginHandle;
@@ -186,22 +186,6 @@ jobs:
               @Override
               public void onCreate(Bundle savedInstanceState) {
                   super.onCreate(savedInstanceState);
-                  overridePendingTransition(android.R.anim.fade_in, android.R.anim.fade_out);
-                  if (getBridge() != null && getBridge().getWebView() != null) {
-                      final WebView webView = getBridge().getWebView();
-                      webView.setBackgroundColor(Color.TRANSPARENT);
-                      webView.setAlpha(0f);
-                      webView.postDelayed(new Runnable() {
-                          @Override
-                          public void run() {
-                              webView.animate()
-                                  .alpha(1f)
-                                  .setDuration(240)
-                                  .setInterpolator(new DecelerateInterpolator())
-                                  .start();
-                          }
-                      }, 60);
-                  }
               }
 
               @Override
@@ -253,6 +237,8 @@ jobs:
               set_icon xhdpi 96 216 144
               set_icon xxhdpi 144 324 216
               set_icon xxxhdpi 192 432 288
+              mkdir -p "$RES/drawable-xxhdpi"
+              $CMD "$LOGO" -resize "240x240" -background transparent -gravity center -extent "240x240" "$RES/drawable-xxhdpi/splash_logo.png"
             fi
           fi
 
