@@ -92,6 +92,7 @@ export async function syncLocalNotifications(
           title: 'Daily Writing Reminder',
           body: 'Take a quiet moment to jot down today’s thoughts in Notes.',
           channelId: CHANNEL_ID,
+          isExactNotification: false,
           schedule: {
             on: { hour: 20, minute: 0 },
             allowWhileIdle: true,
@@ -105,6 +106,7 @@ export async function syncLocalNotifications(
           title: 'Weekly Notes Recap',
           body: 'Review and organize your pinned and recent notes for the week.',
           channelId: CHANNEL_ID,
+          isExactNotification: false,
           schedule: {
             on: { weekday: 1, hour: 19, minute: 0 },
             allowWhileIdle: true,
@@ -177,6 +179,8 @@ export async function notifyAppUpdateStatusBar(
           title: `Notes Update Available (v${latestVersion})`,
           body: 'A new APK version is ready to download. Tap to update.',
           channelId: UPDATE_CHANNEL_ID,
+          foreground: true,
+          isExactNotification: false,
           extra: {
             type: 'app_update',
             version: latestVersion,

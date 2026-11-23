@@ -8,10 +8,10 @@ import { UpgradePromptDialog } from './components/PinDialog';
 import { NotesProvider, useNotes } from './context/NotesContext';
 import {
   AppUpdateInfo,
+  UpdateCheckOptions,
   checkForGitHubApkUpdate,
   dismissAppUpdateVersion,
   getCachedUpdateInfo,
-  markApkVersionDownloaded,
 } from './services/appUpdateService';
 import { APP_UPDATE_NOTIFICATION_ID } from './utils/notificationHelper';
 import { SplashScreen } from './screens/SplashScreen';
@@ -55,20 +55,20 @@ function ScreenRouter() {
     }
 
     let cancelled = false;
-    const runCheck = async (force = false) => {
-      const info = await checkForGitHubApkUpdate(force);
+    const runCheck = async (options: UpdateCheckOptions) => {
+      const info = await checkForGitHubApkUpdate(options);
       if (!cancelled && info) {
         setUpdateInfo(info);
       }
     };
 
     const timer = window.setTimeout(() => {
-      void runCheck(true);
+      void runCheck({ ignoreThrottle: true, respectDismissed: true });
     }, 800);
 
     const listenerPromise = CapacitorApp.addListener('appStateChange', ({ isActive }) => {
       if (isActive) {
-        void runCheck(false);
+        void runCheck({ ignoreThrottle: false, respectDismissed: true });
       }
     });
 
@@ -80,7 +80,7 @@ function ScreenRouter() {
           event?.notification?.extra?.type === 'app_update';
         if (!isUpdateNotif) return;
 
-        void checkForGitHubApkUpdate(true).then((fresh) => {
+        void checkForGitHubApkUpdate({ ignoreThrottle: true, respectDismissed: false }).then((fresh) => {
           if (cancelled) return;
           if (fresh) {
             setUpdateInfo(fresh);
@@ -176,7 +176,7 @@ function ScreenRouter() {
           }}
           onDownload={() => {
             if (updateInfo) {
-              markApkVersionDownloaded(updateInfo.latestVersion);
+              dismissAppUpdateVersion(updateInfo.latestVersion);
             }
             setUpdateInfo(null);
           }}

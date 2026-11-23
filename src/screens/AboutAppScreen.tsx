@@ -1,13 +1,13 @@
 import React, { useEffect, useState } from 'react';
-import { CheckCircle2, ChevronLeft, ChevronRight, Download, Globe, User } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Download, Globe, User } from 'lucide-react';
 import { NavigationShell } from '../components/NavigationShell';
 import { useNotes } from '../context/NotesContext';
 import {
   APP_UPDATE_STATE_EVENT,
   AboutAppUpdateState,
+  checkForGitHubApkUpdate,
   getAboutAppUpdateState,
   getInstalledAppVersion,
-  markApkVersionDownloaded,
 } from '../services/appUpdateService';
 import { SocialPlatformId } from '../types/notes';
 
@@ -84,6 +84,7 @@ export function AboutAppScreen() {
       resolvedVersion = ver;
       setInstalledVersion(ver);
       setAboutUpdateState(getAboutAppUpdateState(ver));
+      void checkForGitHubApkUpdate({ ignoreThrottle: false, respectDismissed: true });
     });
 
     syncUpdateState();
@@ -167,39 +168,22 @@ export function AboutAppScreen() {
           )}
         </div>
 
-        {/* Download Latest / Already Downloaded (shown above Quick Links after Later or Download) */}
+        {/* Update Available (stays visible on About App until installed version updates) */}
         {aboutUpdateState && (
-          aboutUpdateState.isDownloaded ? (
-            <button
-              type="button"
-              disabled
-              className="flex min-h-[46px] w-full items-center justify-between gap-3 rounded-xl bg-[var(--bg-card)] border border-[var(--divider)] px-3.5 text-sm font-medium text-[var(--text-secondary)] cursor-default"
-            >
-              <span className="flex items-center gap-2.5 min-w-0">
-                <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500" strokeWidth={2} />
-                <span className="truncate">Already Downloaded</span>
-              </span>
-              <span className="text-xs opacity-80 shrink-0 tabular-nums">
-                v{aboutUpdateState.latestVersion}
-              </span>
-            </button>
-          ) : (
-            <a
-              href={aboutUpdateState.downloadUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              onClick={() => markApkVersionDownloaded(aboutUpdateState.latestVersion)}
-              className="flex min-h-[46px] w-full items-center justify-between gap-3 rounded-xl bg-[var(--accent-soft)] border border-[var(--accent-primary)]/30 px-3.5 text-sm font-semibold text-[var(--accent-primary)] hover:opacity-90 transition-opacity"
-            >
-              <span className="flex items-center gap-2.5 min-w-0">
-                <Download className="h-4 w-4 shrink-0" strokeWidth={2} />
-                <span className="truncate">Download Latest</span>
-              </span>
-              <span className="text-xs font-medium opacity-85 shrink-0 tabular-nums">
-                v{aboutUpdateState.latestVersion}
-              </span>
-            </a>
-          )
+          <a
+            href={aboutUpdateState.downloadUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex min-h-[46px] w-full items-center justify-between gap-3 rounded-xl bg-[var(--accent-soft)] border border-[var(--accent-primary)]/30 px-3.5 text-sm font-semibold text-[var(--accent-primary)] hover:opacity-90 transition-opacity"
+          >
+            <span className="flex items-center gap-2.5 min-w-0">
+              <Download className="h-4 w-4 shrink-0" strokeWidth={2} />
+              <span className="truncate">Update Available</span>
+            </span>
+            <span className="text-xs font-medium opacity-85 shrink-0 tabular-nums">
+              v{aboutUpdateState.latestVersion}
+            </span>
+          </a>
         )}
 
         {/* Compact Quick Links */}

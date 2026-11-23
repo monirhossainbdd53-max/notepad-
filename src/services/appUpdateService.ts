@@ -6,7 +6,7 @@ import {
 } from '../utils/notificationHelper';
 
 const DISMISSED_VERSION_KEY = 'notes_dismissed_apk_version_v1';
-const DOWNLOADED_VERSION_KEY = 'notes_downloaded_apk_version_v1';
+const LEGACY_DOWNLOADED_VERSION_KEY = 'notes_downloaded_apk_version_v1';
 const NOTIFIED_VERSION_KEY = 'notes_notified_apk_version_v1';
 const LATEST_RELEASE_KEY = 'notes_latest_apk_release_v1';
 const LAST_CHECK_AT_KEY = 'notes_apk_update_last_check_v1';
@@ -24,7 +24,11 @@ export interface AppUpdateInfo {
 export interface AboutAppUpdateState {
   latestVersion: string;
   downloadUrl: string;
-  isDownloaded: boolean;
+}
+
+export interface UpdateCheckOptions {
+  ignoreThrottle?: boolean;
+  respectDismissed?: boolean;
 }
 
 function emitUpdateStateChange(): void {
@@ -84,18 +88,6 @@ export function dismissAppUpdateVersion(version: string): void {
   }
 }
 
-export function markApkVersionDownloaded(version: string): void {
-  try {
-    const normalized = normalizeVersion(version);
-    localStorage.setItem(DOWNLOADED_VERSION_KEY, normalized);
-    localStorage.setItem(DISMISSED_VERSION_KEY, normalized);
-    emitUpdateStateChange();
-    void clearAppUpdateStatusBarNotification();
-  } catch {
-    // Ignore storage errors
-  }
-}
-
 function saveLatestReleaseCache(info: AppUpdateInfo): void {
   try {
     localStorage.setItem(LATEST_RELEASE_KEY, JSON.stringify(info));
@@ -108,6 +100,7 @@ function saveLatestReleaseCache(info: AppUpdateInfo): void {
 function clearLatestReleaseCache(): void {
   try {
     localStorage.removeItem(LATEST_RELEASE_KEY);
+    localStorage.removeItem(LEGACY_DOWNLOADED_VERSION_KEY);
     emitUpdateStateChange();
   } catch {
     // Ignore storage errors
@@ -128,19 +121,9 @@ export function getAboutAppUpdateState(currentVersion: string): AboutAppUpdateSt
       return null;
     }
 
-    const dismissed = normalizeVersion(localStorage.getItem(DISMISSED_VERSION_KEY) || '');
-    const downloaded = normalizeVersion(localStorage.getItem(DOWNLOADED_VERSION_KEY) || '');
-    const isDownloaded = downloaded === latestVersion;
-    const isDismissed = dismissed === latestVersion;
-
-    if (!isDismissed && !isDownloaded) {
-      return null;
-    }
-
     return {
       latestVersion,
       downloadUrl,
-      isDownloaded,
     };
   } catch {
     return null;
@@ -165,7 +148,14 @@ export function getCachedUpdateInfo(): AppUpdateInfo | null {
   }
 }
 
-export async function checkForGitHubApkUpdate(force = false): Promise<AppUpdateInfo | null> {
+export async function checkForGitHubApkUpdate(
+  options: boolean | UpdateCheckOptions = false
+): Promise<AppUpdateInfo | null> {
+  const ignoreThrottle =
+    typeof options === 'boolean' ? options : Boolean(options.ignoreThrottle);
+  const respectDismissed =
+    typeof options === 'boolean' ? !options : options.respectDismissed ?? true;
+
   try {
     if (!Capacitor.isNativePlatform() || Capacitor.getPlatform() !== 'android') {
       return null;
@@ -176,7 +166,7 @@ export async function checkForGitHubApkUpdate(force = false): Promise<AppUpdateI
       return null;
     }
 
-    if (!force) {
+    if (!ignoreThrottle) {
       const lastCheckRaw = localStorage.getItem(LAST_CHECK_AT_KEY);
       const lastCheck = lastCheckRaw ? Number(lastCheckRaw) : 0;
       if (Number.isFinite(lastCheck) && Date.now() - lastCheck < CHECK_THROTTLE_MS) {
@@ -244,14 +234,9 @@ export async function checkForGitHubApkUpdate(force = false): Promise<AppUpdateI
     saveLatestReleaseCache(updateInfo);
 
     const dismissed = normalizeVersion(localStorage.getItem(DISMISSED_VERSION_KEY) || '');
-    const downloaded = normalizeVersion(localStorage.getItem(DOWNLOADED_VERSION_KEY) || '');
     const notified = normalizeVersion(localStorage.getItem(NOTIFIED_VERSION_KEY) || '');
 
-    if (
-      dismissed !== latestVersion &&
-      downloaded !== latestVersion &&
-      notified !== latestVersion
-    ) {
+    if (dismissed !== latestVersion && notified !== latestVersion) {
       void notifyAppUpdateStatusBar(latestVersion, downloadUrl).then((sent) => {
         if (sent) {
           try {
@@ -263,7 +248,7 @@ export async function checkForGitHubApkUpdate(force = false): Promise<AppUpdateI
       });
     }
 
-    if (!force && dismissed && dismissed === latestVersion) {
+    if (respectDismissed && dismissed && dismissed === latestVersion) {
       return null;
     }
 
