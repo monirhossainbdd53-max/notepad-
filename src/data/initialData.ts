@@ -2,6 +2,7 @@ import vintageStoryImg from '../assets/images/vintage_story_desk_1795192442584.j
 import { Folder, Note, UserAccount } from '../types/notes';
 
 export const DEFAULT_MY_NOTES_FOLDER_ID = 'folder_my_notes_default';
+export const CV_GENERATION_FOLDER_ID = 'folder_cv_generation_system';
 export const FEATURED_STORY_NOTE_ID = 'note_featured_story_v1';
 
 const SEEDED_TIMESTAMP = '2026-11-20T08:00:00.000Z';
@@ -11,6 +12,13 @@ export const DEFAULT_FOLDERS: Folder[] = [
     id: DEFAULT_MY_NOTES_FOLDER_ID,
     name: 'My Notes',
     isDefault: true,
+    createdAt: SEEDED_TIMESTAMP,
+  },
+  {
+    id: CV_GENERATION_FOLDER_ID,
+    name: 'Cv Generation',
+    isDefault: true,
+    isSystem: true,
     createdAt: SEEDED_TIMESTAMP,
   },
 ];

@@ -1,14 +1,17 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { ChevronLeft, Pin, Search } from 'lucide-react';
+import { BulkActionBar, useBulkSelection } from '../components/BulkActionBar';
 import { NavigationShell } from '../components/NavigationShell';
 import { NoteCard } from '../components/NoteCard';
 import { useNotes } from '../context/NotesContext';
 
 export function PinnedNotesScreen() {
   const { pinnedNotes, getFolderById, navigate, goBack } = useNotes();
+  const visibleNoteIds = useMemo(() => pinnedNotes.map((n) => n.id), [pinnedNotes]);
+  const bulk = useBulkSelection(visibleNoteIds);
 
   return (
-    <NavigationShell showMobileTabs showFab>
+    <NavigationShell showMobileTabs showFab={!bulk.selectionMode}>
       <header className="sticky top-0 z-20 bg-[var(--bg-canvas)]/95 backdrop-blur-md px-4 sm:px-8 pt-5 pb-3">
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-2">
@@ -58,12 +61,26 @@ export function PinnedNotesScreen() {
                 key={note.id}
                 note={note}
                 folder={getFolderById(note.folderId)}
-                onClick={() => navigate('note-details', { noteId: note.id })}
+                selectionMode={bulk.selectionMode}
+                selected={bulk.isSelected(note.id)}
+                onLongPress={() => bulk.startSelection(note.id)}
+                onClick={() =>
+                  bulk.selectionMode
+                    ? bulk.toggleSelect(note.id)
+                    : navigate('note-details', { noteId: note.id })
+                }
               />
             ))}
           </div>
         )}
       </section>
+
+      <BulkActionBar
+        selectedIds={bulk.selectedIds}
+        allSelected={bulk.allSelected}
+        onToggleSelectAll={bulk.toggleSelectAll}
+        onClear={bulk.clearSelection}
+      />
     </NavigationShell>
   );
 }

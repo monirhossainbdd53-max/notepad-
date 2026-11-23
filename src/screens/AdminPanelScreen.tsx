@@ -1,8 +1,7 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   ArrowDown,
   ArrowUp,
-  Calendar,
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
@@ -32,7 +31,6 @@ import {
   compressTeamPhotoFile,
   SOCIAL_PLATFORM_OPTIONS,
 } from '../services/aboutAppService';
-import { getPreviewDurationMs } from '../services/adminConfigService';
 import { DEFAULT_APP_CONTROLS_CONFIG } from '../services/appControlsService';
 import {
   buildSupportReplyMailto,
@@ -66,93 +64,6 @@ type AdminModule =
   | 'about';
 type SupportFilter = 'all' | 'open' | 'replied';
 
-function toLocalDateInputValue(date: Date): string {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
-}
-
-function toLocalTimeInputValue(date: Date): string {
-  const hours = String(date.getHours()).padStart(2, '0');
-  const minutes = String(date.getMinutes()).padStart(2, '0');
-  return `${hours}:${minutes}`;
-}
-
-function parseLocalDateTime(dateStr: string, timeStr: string): Date | null {
-  const dateMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateStr.trim());
-  const timeMatch = /^(\d{2}):(\d{2})/.exec(timeStr.trim());
-  if (!dateMatch || !timeMatch) return null;
-  const year = Number(dateMatch[1]);
-  const month = Number(dateMatch[2]);
-  const day = Number(dateMatch[3]);
-  const hour = Number(timeMatch[1]);
-  const minute = Number(timeMatch[2]);
-  const dt = new Date(year, month - 1, day, hour, minute, 0, 0);
-  if (
-    dt.getFullYear() !== year ||
-    dt.getMonth() !== month - 1 ||
-    dt.getDate() !== day ||
-    dt.getHours() !== hour ||
-    dt.getMinutes() !== minute
-  ) {
-    return null;
-  }
-  return dt;
-}
-
-function resolvePreviewTargetDate(config: {
-  expiresAt?: string;
-  days: number;
-  hours: number;
-  minutes: number;
-  seconds: number;
-}): Date {
-  if (config.expiresAt) {
-    const parsed = new Date(config.expiresAt);
-    if (Number.isFinite(parsed.getTime())) {
-      return parsed;
-    }
-  }
-  const durationMs = getPreviewDurationMs({
-    enabled: true,
-    days: config.days,
-    hours: config.hours,
-    minutes: config.minutes,
-    seconds: config.seconds,
-    updatedAt: '',
-  });
-  return new Date(Date.now() + (durationMs > 0 ? durationMs : 7 * 86400 * 1000));
-}
-
-function formatCalendarTimeDisplay(date: Date): string {
-  try {
-    return new Intl.DateTimeFormat(undefined, {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-      hour: 'numeric',
-      minute: '2-digit',
-    }).format(date);
-  } catch {
-    return date.toLocaleString();
-  }
-}
-
-function formatRemainingTime(targetMs: number, nowMs: number): string {
-  const diffMs = targetMs - nowMs;
-  if (diffMs <= 0) return 'Expired';
-  const totalMinutes = Math.floor(diffMs / 60000);
-  const d = Math.floor(totalMinutes / 1440);
-  const h = Math.floor((totalMinutes % 1440) / 60);
-  const m = totalMinutes % 60;
-  const parts: string[] = [];
-  if (d > 0) parts.push(`${d}d`);
-  if (h > 0) parts.push(`${h}h`);
-  if (m > 0 || parts.length === 0) parts.push(`${m}m`);
-  return `${parts.join(' ')} left`;
-}
-
 export function AdminPanelScreen() {
   const {
     account,
@@ -182,15 +93,7 @@ export function AdminPanelScreen() {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   const [enabled, setEnabled] = useState<boolean>(previewConfig.enabled);
-  const [endDate, setEndDate] = useState<string>(() =>
-    toLocalDateInputValue(resolvePreviewTargetDate(previewConfig))
-  );
-  const [endTime, setEndTime] = useState<string>(() =>
-    toLocalTimeInputValue(resolvePreviewTargetDate(previewConfig))
-  );
-  const [clockTick, setClockTick] = useState<number>(() => Date.now());
-  const dateInputRef = useRef<HTMLInputElement | null>(null);
-  const timeInputRef = useRef<HTMLInputElement | null>(null);
+  const [trialDaysDraft, setTrialDaysDraft] = useState<string>(String(previewConfig.days));
 
   const [ceoDraft, setCeoDraft] = useState<AboutTeamMember | null>(aboutConfig.ceo);
   const [teamDraft, setTeamDraft] = useState<AboutTeamMember[]>(aboutConfig.team);
@@ -261,17 +164,8 @@ export function AdminPanelScreen() {
 
   useEffect(() => {
     setEnabled(previewConfig.enabled);
-    const target = resolvePreviewTargetDate(previewConfig);
-    setEndDate(toLocalDateInputValue(target));
-    setEndTime(toLocalTimeInputValue(target));
+    setTrialDaysDraft(String(previewConfig.days));
   }, [previewConfig]);
-
-  useEffect(() => {
-    if (activeModule !== 'preview-timer' && activeModule !== 'overview') return;
-    setClockTick(Date.now());
-    const id = window.setInterval(() => setClockTick(Date.now()), 15000);
-    return () => window.clearInterval(id);
-  }, [activeModule]);
 
   useEffect(() => {
     setCeoDraft(aboutConfig.ceo);
@@ -404,46 +298,23 @@ export function AdminPanelScreen() {
     },
   ];
 
-  const totalConfiguredMs = getPreviewDurationMs(previewConfig);
-  const savedExpiresAtMs = previewConfig.expiresAt
-    ? new Date(previewConfig.expiresAt).getTime()
-    : 0;
-  const hasSavedEndDateTime =
-    Number.isFinite(savedExpiresAtMs) && savedExpiresAtMs > 0;
-
-  const formatDurationSummary = () => {
-    if (hasSavedEndDateTime) {
-      return formatCalendarTimeDisplay(new Date(savedExpiresAtMs));
-    }
-    const parts: string[] = [];
-    if (previewConfig.days > 0) parts.push(`${previewConfig.days}d`);
-    if (previewConfig.hours > 0) parts.push(`${previewConfig.hours}h`);
-    if (previewConfig.minutes > 0) parts.push(`${previewConfig.minutes}m`);
-    if (previewConfig.seconds > 0 || parts.length === 0) parts.push(`${previewConfig.seconds}s`);
-    return parts.join(' ');
-  };
-
-  const draftTargetDate = useMemo(
-    () => parseLocalDateTime(endDate, endTime),
-    [endDate, endTime]
-  );
+  const savedTrialDays = Math.max(0, Math.floor(previewConfig.days || 0));
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     setPreviewJustSaved(false);
-    const target = parseLocalDateTime(endDate, endTime);
-    if (!target) {
-      showToast('Select a valid date and time', 'danger');
+    const parsedDays = Math.max(0, Math.min(3650, Math.floor(Number(trialDaysDraft || '0'))));
+    if (enabled && (!Number.isFinite(parsedDays) || parsedDays < 1)) {
+      showToast('Enter at least 1 day for Trial Duration', 'danger');
       return;
     }
-    const remainingSec = Math.max(0, Math.floor((target.getTime() - Date.now()) / 1000));
     const ok = await updateAdminPreviewConfig({
       enabled,
-      days: Math.min(3650, Math.floor(remainingSec / 86400)),
-      hours: Math.floor((remainingSec % 86400) / 3600),
-      minutes: Math.floor((remainingSec % 3600) / 60),
-      seconds: remainingSec % 60,
-      expiresAt: target.toISOString(),
+      days: Number.isFinite(parsedDays) ? parsedDays : 0,
+      hours: 0,
+      minutes: 0,
+      seconds: 0,
+      expiresAt: '',
     });
     if (ok) {
       setPreviewJustSaved(true);
@@ -883,28 +754,24 @@ export function AdminPanelScreen() {
                         Preview Timer
                       </p>
                       <p className="mt-1 text-xl font-bold tracking-tight tabular-nums">
-                        {!previewConfig.enabled
-                          ? 'Hidden'
-                          : hasSavedEndDateTime
-                          ? savedExpiresAtMs > clockTick
-                            ? formatRemainingTime(savedExpiresAtMs, clockTick)
-                            : 'Expired'
-                          : totalConfiguredMs > 0
-                          ? `Active · ${formatDurationSummary()}`
-                          : 'Hidden'}
+                        {!previewConfig.enabled || savedTrialDays <= 0
+                          ? 'Off'
+                          : `${savedTrialDays} ${savedTrialDays === 1 ? 'Day' : 'Days'}`}
                       </p>
                       <p className="mt-1 text-xs text-[var(--text-secondary)]">
-                        {hasSavedEndDateTime && previewConfig.enabled
-                          ? `Until ${formatDurationSummary()}`
-                          : (
-                            <>
-                              Sync:{' '}
-                              <span className="capitalize font-medium text-[var(--text-primary)]">
-                                {previewSyncState}
-                              </span>
-                              {previewConfig.updatedAt && ` · ${formatFullDate(previewConfig.updatedAt)}`}
-                            </>
-                          )}
+                        {previewConfig.enabled && savedTrialDays > 0 ? (
+                          `New installs get ${savedTrialDays} ${
+                            savedTrialDays === 1 ? 'day' : 'days'
+                          } free`
+                        ) : (
+                          <>
+                            Sync:{' '}
+                            <span className="capitalize font-medium text-[var(--text-primary)]">
+                              {previewSyncState}
+                            </span>
+                            {previewConfig.updatedAt && ` · ${formatFullDate(previewConfig.updatedAt)}`}
+                          </>
+                        )}
                       </p>
                     </div>
                     <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[var(--accent-soft)] text-[var(--accent-primary)]">
@@ -915,7 +782,7 @@ export function AdminPanelScreen() {
                     <p className="text-xs text-[#E45B5B]">{previewSyncError}</p>
                   )}
                   <div className="pt-3 border-t border-[var(--divider)] flex items-center justify-between gap-3">
-                    <span className="text-xs text-[var(--text-secondary)]">Trial access window</span>
+                    <span className="text-xs text-[var(--text-secondary)]">New install free trial</span>
                     <button
                       type="button"
                       onClick={() => selectModule('preview-timer')}
@@ -2199,75 +2066,21 @@ export function AdminPanelScreen() {
                 <div>
                   <p className="text-sm font-semibold">Trial Duration</p>
                   <p className="text-xs text-[var(--text-secondary)] mt-0.5">
-                    Select the calendar date and clock time users can use Preview Mode for free.
+                    Set how many days a newly installed user can use the app for free.
                   </p>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div className="relative flex items-center">
-                    <Calendar
-                      className="pointer-events-none absolute left-3.5 h-4 w-4 text-[var(--text-secondary)]"
-                      strokeWidth={1.9}
-                    />
-                    <input
-                      ref={dateInputRef}
-                      type="date"
-                      value={endDate}
-                      onChange={(e) => setEndDate(e.target.value)}
-                      onClick={() => {
-                        try {
-                          dateInputRef.current?.showPicker?.();
-                        } catch {
-                          // Fallback to native focus behavior
-                        }
-                      }}
-                      aria-label="Trial end date"
-                      className="w-full min-h-[48px] rounded-xl bg-[var(--bg-canvas)] border border-[var(--divider)] pl-10 pr-3.5 text-sm font-medium text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent-primary)] tabular-nums cursor-pointer"
-                    />
-                  </div>
-
-                  <div className="relative flex items-center">
-                    <Clock
-                      className="pointer-events-none absolute left-3.5 h-4 w-4 text-[var(--text-secondary)]"
-                      strokeWidth={1.9}
-                    />
-                    <input
-                      ref={timeInputRef}
-                      type="time"
-                      value={endTime}
-                      onChange={(e) => setEndTime(e.target.value)}
-                      onClick={() => {
-                        try {
-                          timeInputRef.current?.showPicker?.();
-                        } catch {
-                          // Fallback to native focus behavior
-                        }
-                      }}
-                      aria-label="Trial end time"
-                      className="w-full min-h-[48px] rounded-xl bg-[var(--bg-canvas)] border border-[var(--divider)] pl-10 pr-3.5 text-sm font-medium text-[var(--text-primary)] focus:outline-none focus:border-[var(--accent-primary)] tabular-nums cursor-pointer"
-                    />
-                  </div>
-                </div>
-
-                {draftTargetDate && (
-                  <div className="pt-3 border-t border-[var(--divider)] flex flex-wrap items-center justify-between gap-2 text-xs">
-                    <span className="text-[var(--text-secondary)]">
-                      Free until{' '}
-                      <span className="font-semibold text-[var(--text-primary)]">
-                        {formatCalendarTimeDisplay(draftTargetDate)}
-                      </span>
-                    </span>
-                    <span
-                      className={`font-semibold tabular-nums ${
-                        draftTargetDate.getTime() > clockTick
-                          ? 'text-[var(--accent-primary)]'
-                          : 'text-[#E45B5B]'
-                      }`}
-                    >
-                      {formatRemainingTime(draftTargetDate.getTime(), clockTick)}
-                    </span>
-                  </div>
-                )}
+                <input
+                  type="number"
+                  min={1}
+                  max={3650}
+                  inputMode="numeric"
+                  value={trialDaysDraft}
+                  onChange={(e) => setTrialDaysDraft(e.target.value)}
+                  placeholder="Free trial days (e.g. 7)"
+                  aria-label="Free trial days after install"
+                  className="w-full min-h-[48px] rounded-xl bg-[var(--bg-canvas)] border border-[var(--divider)] px-4 text-sm font-medium text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] focus:outline-none focus:border-[var(--accent-primary)] tabular-nums"
+                />
               </div>
 
               {previewSyncError && (

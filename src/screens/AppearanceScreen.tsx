@@ -1,8 +1,29 @@
-import React from 'react';
-import { Check, ChevronLeft, Lock, Monitor, Moon, Sun } from 'lucide-react';
+import React, { useCallback, useRef } from 'react';
+import {
+  BookOpen,
+  Check,
+  ChevronLeft,
+  Droplets,
+  Leaf,
+  Lock,
+  Monitor,
+  Moon,
+  Sparkles,
+  Sun,
+} from 'lucide-react';
 import { NavigationShell } from '../components/NavigationShell';
 import { useNotes } from '../context/NotesContext';
-import { NoteFontSize, ThemePalette, ThemePreference } from '../types/notes';
+import {
+  NOTE_FONT_SIZE_MAX,
+  NOTE_FONT_SIZE_MIN,
+  ThemePalette,
+  ThemePreference,
+} from '../types/notes';
+
+const FONT_SIZE_STEPS = Array.from(
+  { length: NOTE_FONT_SIZE_MAX - NOTE_FONT_SIZE_MIN + 1 },
+  (_, index) => NOTE_FONT_SIZE_MIN + index
+);
 
 export function AppearanceScreen() {
   const {
@@ -16,75 +37,115 @@ export function AppearanceScreen() {
     goBack,
   } = useNotes();
 
+  const trackRef = useRef<HTMLDivElement | null>(null);
+
   const modeOptions: {
     id: ThemePreference;
     label: string;
-    description: string;
     icon: React.ComponentType<{ className?: string; strokeWidth?: number }>;
   }[] = [
-    {
-      id: 'light',
-      label: 'Light Mode',
-      description: 'Warm paper background with crisp dark typography',
-      icon: Sun,
-    },
-    {
-      id: 'dark',
-      label: 'Dark Mode',
-      description: 'Low-glare charcoal canvas for comfortable evening writing',
-      icon: Moon,
-    },
-    {
-      id: 'system',
-      label: 'System Default',
-      description: 'Automatically match your device appearance setting',
-      icon: Monitor,
-    },
+    { id: 'light', label: 'Light', icon: Sun },
+    { id: 'dark', label: 'Dark', icon: Moon },
+    { id: 'system', label: 'System', icon: Monitor },
   ];
 
   const paletteOptions: {
     id: ThemePalette;
     name: string;
     description: string;
-    swatch: string;
-    accent: string;
+    iconBg: string;
+    iconColor: string;
+    icon: React.ComponentType<{ className?: string; strokeWidth?: number }>;
     premiumOnly: boolean;
   }[] = [
     {
       id: 'default',
       name: 'Classic Warm',
       description: 'Signature warm paper and amber gold',
-      swatch: '#F8F7F5',
-      accent: '#D9A928',
+      iconBg: '#FFF5D9',
+      iconColor: '#B5840E',
+      icon: Sparkles,
       premiumOnly: false,
     },
     {
       id: 'sepia',
       name: 'Warm Sepia',
       description: 'Soft archival paper for long-form reading',
-      swatch: '#F5EFE4',
-      accent: '#B88022',
+      iconBg: '#F5E6C8',
+      iconColor: '#9C6812',
+      icon: BookOpen,
       premiumOnly: true,
     },
     {
       id: 'sage',
       name: 'Botanical Sage',
       description: 'Quiet muted green mineral surface',
-      swatch: '#F2F5F2',
-      accent: '#4A7856',
+      iconBg: '#E3EFE6',
+      iconColor: '#3E6B4A',
+      icon: Leaf,
       premiumOnly: true,
     },
     {
       id: 'slate',
       name: 'Crisp Slate',
       description: 'Cool ink-inspired studio tone',
-      swatch: '#F2F4F7',
-      accent: '#436496',
+      iconBg: '#E4ECF7',
+      iconColor: '#3A5988',
+      icon: Droplets,
       premiumOnly: true,
     },
   ];
 
   const activePalette = canUsePremiumPalettes ? palette : 'default';
+
+  const clampedSize = Math.min(
+    NOTE_FONT_SIZE_MAX,
+    Math.max(NOTE_FONT_SIZE_MIN, Math.round(noteFontSize))
+  );
+  const progressRatio =
+    (clampedSize - NOTE_FONT_SIZE_MIN) / (NOTE_FONT_SIZE_MAX - NOTE_FONT_SIZE_MIN);
+  const progressPercent = progressRatio * 100;
+
+  const updateFontSizeFromClientX = useCallback(
+    (clientX: number) => {
+      const track = trackRef.current;
+      if (!track) return;
+      const rect = track.getBoundingClientRect();
+      if (rect.width <= 0) return;
+      const ratio = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
+      const nextValue = Math.round(
+        NOTE_FONT_SIZE_MIN + ratio * (NOTE_FONT_SIZE_MAX - NOTE_FONT_SIZE_MIN)
+      );
+      setNoteFontSize(nextValue);
+    },
+    [setNoteFontSize]
+  );
+
+  const handleTrackPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.currentTarget.setPointerCapture(e.pointerId);
+    updateFontSizeFromClientX(e.clientX);
+  };
+
+  const handleTrackPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!e.currentTarget.hasPointerCapture(e.pointerId)) return;
+    updateFontSizeFromClientX(e.clientX);
+  };
+
+  const handleTrackKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key === 'ArrowRight' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      setNoteFontSize(Math.min(NOTE_FONT_SIZE_MAX, clampedSize + 1));
+    } else if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') {
+      e.preventDefault();
+      setNoteFontSize(Math.max(NOTE_FONT_SIZE_MIN, clampedSize - 1));
+    } else if (e.key === 'Home') {
+      e.preventDefault();
+      setNoteFontSize(NOTE_FONT_SIZE_MIN);
+    } else if (e.key === 'End') {
+      e.preventDefault();
+      setNoteFontSize(NOTE_FONT_SIZE_MAX);
+    }
+  };
 
   return (
     <NavigationShell showMobileTabs={false}>
@@ -105,156 +166,191 @@ export function AppearanceScreen() {
       </header>
 
       <section className="px-5 sm:px-8 pt-3 pb-12 space-y-6">
-        {/* Light / Dark / System */}
+        {/* Unified Theme Mode (Light / Dark / System + Distinct-Icon Theme Styles) */}
         <div>
           <h2 className="px-1 mb-2 text-xs font-semibold text-[var(--text-secondary)]">
             Theme Mode
           </h2>
-          <div className="rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] divide-y divide-[var(--divider)]">
-            {modeOptions.map((opt) => {
-              const Icon = opt.icon;
-              const selected = theme === opt.id;
-              return (
-                <button
-                  key={opt.id}
-                  type="button"
-                  onClick={() => setTheme(opt.id)}
-                  className="flex w-full min-h-[68px] items-center justify-between gap-4 px-4 py-3 text-left hover:bg-[var(--bg-subtle)]/60 transition-colors cursor-pointer"
-                >
-                  <span className="flex items-center gap-3.5">
-                    <span
-                      className={`flex h-10 w-10 items-center justify-center rounded-xl ${
-                        selected
-                          ? 'bg-[var(--accent-soft)] text-[var(--accent-primary)]'
-                          : 'bg-[var(--bg-canvas)] text-[var(--text-secondary)]'
-                      }`}
-                    >
-                      <Icon className="h-5 w-5" strokeWidth={1.85} />
-                    </span>
-                    <span>
-                      <span className="block text-[15px] font-medium text-[var(--text-primary)]">
-                        {opt.label}
-                      </span>
-                      <span className="block text-xs text-[var(--text-secondary)] mt-0.5">
-                        {opt.description}
-                      </span>
-                    </span>
-                  </span>
-
-                  <span
-                    className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border ${
+          <div className="rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] overflow-hidden">
+            {/* Light / Dark / System Switch */}
+            <div className="grid grid-cols-3 gap-2 p-2.5">
+              {modeOptions.map((opt) => {
+                const Icon = opt.icon;
+                const selected = theme === opt.id;
+                return (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => setTheme(opt.id)}
+                    className={`flex min-h-[60px] flex-col items-center justify-center gap-1.5 rounded-xl px-2 py-2.5 transition-colors cursor-pointer ${
                       selected
-                        ? 'border-[var(--accent-primary)] bg-[var(--accent-primary)] text-white dark:text-[#171717]'
-                        : 'border-[var(--text-secondary)]/40'
+                        ? 'bg-[var(--accent-soft)] text-[var(--accent-primary)] font-semibold'
+                        : 'text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)]/70 hover:text-[var(--text-primary)] font-medium'
                     }`}
                   >
-                    {selected && <Check className="h-3 w-3" strokeWidth={3} />}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
+                    <Icon className="h-5 w-5" strokeWidth={selected ? 2.1 : 1.85} />
+                    <span className="text-xs tracking-tight">{opt.label}</span>
+                  </button>
+                );
+              })}
+            </div>
 
-        {/* Premium Color Palettes */}
-        <div>
-          <h2 className="px-1 mb-2 text-xs font-semibold text-[var(--text-secondary)]">
-            Color Themes
-          </h2>
-          <div className="rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] divide-y divide-[var(--divider)]">
-            {paletteOptions.map((item) => {
-              const selected = activePalette === item.id;
-              const locked = item.premiumOnly && !canUsePremiumPalettes;
-              return (
-                <button
-                  key={item.id}
-                  type="button"
-                  onClick={() => setPalette(item.id)}
-                  className="flex w-full min-h-[66px] items-center justify-between gap-4 px-4 py-3 text-left hover:bg-[var(--bg-subtle)]/60 transition-colors cursor-pointer"
-                >
-                  <span className="flex items-center gap-3.5">
-                    <span
-                      className="flex h-10 w-10 items-center justify-center rounded-xl border border-[var(--divider)]"
-                      style={{ backgroundColor: item.swatch }}
-                    >
+            {/* Distinct-Icon Theme Styles Inside Theme Mode */}
+            <div className="border-t border-[var(--divider)] divide-y divide-[var(--divider)]">
+              {paletteOptions.map((item) => {
+                const Icon = item.icon;
+                const selected = activePalette === item.id;
+                const locked = item.premiumOnly && !canUsePremiumPalettes;
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => setPalette(item.id)}
+                    className="flex w-full min-h-[64px] items-center justify-between gap-4 px-4 py-3 text-left hover:bg-[var(--bg-subtle)]/60 transition-colors cursor-pointer"
+                  >
+                    <span className="flex items-center gap-3.5">
                       <span
-                        className="h-4 w-4 rounded-full"
-                        style={{ backgroundColor: item.accent }}
+                        className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-black/5"
+                        style={{ backgroundColor: item.iconBg, color: item.iconColor }}
+                      >
+                        <Icon className="h-5 w-5" strokeWidth={1.9} />
+                      </span>
+                      <span>
+                        <span className="block text-[15px] font-medium text-[var(--text-primary)]">
+                          {item.name}
+                        </span>
+                        <span className="block text-xs text-[var(--text-secondary)] mt-0.5">
+                          {item.description}
+                        </span>
+                      </span>
+                    </span>
+
+                    {locked ? (
+                      <Lock
+                        className="h-4 w-4 shrink-0 text-[var(--accent-primary)]"
+                        strokeWidth={1.9}
                       />
-                    </span>
-                    <span>
-                      <span className="block text-[15px] font-medium text-[var(--text-primary)]">
-                        {item.name}
+                    ) : (
+                      <span
+                        className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border ${
+                          selected
+                            ? 'border-[var(--accent-primary)] bg-[var(--accent-primary)] text-white dark:text-[#171717]'
+                            : 'border-[var(--text-secondary)]/40'
+                        }`}
+                      >
+                        {selected && <Check className="h-3 w-3" strokeWidth={3} />}
                       </span>
-                      <span className="block text-xs text-[var(--text-secondary)] mt-0.5">
-                        {item.description}
-                      </span>
-                    </span>
-                  </span>
-
-                  {locked ? (
-                    <Lock className="h-4 w-4 shrink-0 text-[var(--accent-primary)]" strokeWidth={1.9} />
-                  ) : (
-                    <span
-                      className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border ${
-                        selected
-                          ? 'border-[var(--accent-primary)] bg-[var(--accent-primary)] text-white dark:text-[#171717]'
-                          : 'border-[var(--text-secondary)]/40'
-                      }`}
-                    >
-                      {selected && <Check className="h-3 w-3" strokeWidth={3} />}
-                    </span>
-                  )}
-                </button>
-              );
-            })}
+                    )}
+                  </button>
+                );
+              })}
+            </div>
           </div>
         </div>
 
-        {/* Note Text Size */}
+        {/* Dotted Draggable Note Text Size Progress Slider */}
         <div>
-          <h2 className="px-1 mb-2 text-xs font-semibold text-[var(--text-secondary)]">
-            Note Text Size
-          </h2>
-          <div className="grid grid-cols-3 gap-2 rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] p-1.5">
-            {(
-              [
-                { id: 'small', label: 'Small', sample: 'text-xs' },
-                { id: 'medium', label: 'Medium', sample: 'text-sm' },
-                { id: 'large', label: 'Large', sample: 'text-base' },
-              ] as { id: NoteFontSize; label: string; sample: string }[]
-            ).map((opt) => {
-              const selected = noteFontSize === opt.id;
-              return (
-                <button
-                  key={opt.id}
-                  type="button"
-                  onClick={() => setNoteFontSize(opt.id)}
-                  className={`min-h-[46px] rounded-xl px-3 py-2 text-center transition-colors cursor-pointer ${
-                    selected
-                      ? 'bg-[var(--accent-soft)] text-[var(--accent-primary)] font-semibold'
-                      : 'text-[var(--text-primary)] hover:bg-[var(--bg-subtle)]/60 font-medium'
-                  }`}
-                >
-                  <span className={`block ${opt.sample}`}>{opt.label}</span>
-                </button>
-              );
-            })}
+          <div className="flex items-center justify-between px-1 mb-2">
+            <h2 className="text-xs font-semibold text-[var(--text-secondary)]">
+              Note Text Size
+            </h2>
+            <span className="text-xs font-semibold tabular-nums text-[var(--accent-primary)]">
+              {clampedSize}px
+            </span>
           </div>
-        </div>
 
-        {/* Live Theme Preview Card */}
-        <div className="rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] p-5">
-          <p className="text-xs font-medium text-[var(--text-secondary)]">Preview</p>
-          <h2 className="mt-2 text-base font-semibold text-[var(--text-primary)]">
-            Morning reading notes
-          </h2>
-          <p
-            className="mt-1 text-[var(--text-secondary)]"
-            style={{ fontSize: 'var(--note-font-size)' }}
-          >
-            Warm surfaces and high-contrast typography adapt seamlessly across every screen.
-          </p>
+          <div className="rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] px-4 py-4">
+            <div className="flex items-center gap-3.5">
+              <button
+                type="button"
+                aria-label="Decrease note text size"
+                onClick={() =>
+                  setNoteFontSize(Math.max(NOTE_FONT_SIZE_MIN, clampedSize - 1))
+                }
+                disabled={clampedSize <= NOTE_FONT_SIZE_MIN}
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-xs font-semibold text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)] hover:text-[var(--text-primary)] disabled:opacity-35 cursor-pointer"
+              >
+                A
+              </button>
+
+              <div
+                ref={trackRef}
+                role="slider"
+                tabIndex={0}
+                aria-label="Note Text Size"
+                aria-valuemin={NOTE_FONT_SIZE_MIN}
+                aria-valuemax={NOTE_FONT_SIZE_MAX}
+                aria-valuenow={clampedSize}
+                onPointerDown={handleTrackPointerDown}
+                onPointerMove={handleTrackPointerMove}
+                onKeyDown={handleTrackKeyDown}
+                className="relative mx-2.5 flex-1 h-10 flex items-center select-none touch-none cursor-pointer focus:outline-none"
+              >
+                {/* Background track */}
+                <div className="relative h-2 w-full rounded-full bg-[var(--bg-subtle)] overflow-hidden">
+                  <div
+                    className="absolute inset-y-0 left-0 rounded-full bg-[var(--accent-primary)] transition-[width] duration-75"
+                    style={{ width: `${progressPercent}%` }}
+                  />
+                </div>
+
+                {/* Stepped dots along the progress bar */}
+                {FONT_SIZE_STEPS.map((step) => {
+                  const stepPercent =
+                    ((step - NOTE_FONT_SIZE_MIN) /
+                      (NOTE_FONT_SIZE_MAX - NOTE_FONT_SIZE_MIN)) *
+                    100;
+                  const isFilled = step <= clampedSize;
+                  const isCurrent = step === clampedSize;
+                  return (
+                    <span
+                      key={step}
+                      style={{ left: `${stepPercent}%` }}
+                      className={`pointer-events-none absolute top-1/2 -translate-x-1/2 -translate-y-1/2 block h-1.5 w-1.5 rounded-full transition-colors ${
+                        isCurrent
+                          ? 'opacity-0'
+                          : isFilled
+                            ? 'bg-white/85 dark:bg-[#171717]/80'
+                            : 'bg-[var(--text-secondary)]/35'
+                      }`}
+                    />
+                  );
+                })}
+
+                {/* Draggable thumb */}
+                <div
+                  className="pointer-events-none absolute top-1/2 -translate-y-1/2 -translate-x-1/2 h-5 w-5 rounded-full bg-[var(--bg-card)] border-[2.5px] border-[var(--accent-primary)] shadow-md transition-[left] duration-75"
+                  style={{ left: `${progressPercent}%` }}
+                />
+              </div>
+
+              <button
+                type="button"
+                aria-label="Increase note text size"
+                onClick={() =>
+                  setNoteFontSize(Math.min(NOTE_FONT_SIZE_MAX, clampedSize + 1))
+                }
+                disabled={clampedSize >= NOTE_FONT_SIZE_MAX}
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-lg font-bold text-[var(--text-primary)] hover:bg-[var(--bg-subtle)] disabled:opacity-35 cursor-pointer"
+              >
+                A
+              </button>
+            </div>
+          </div>
+
+          {/* Live Note Text Size & Theme Preview Directly Below */}
+          <div className="mt-3 rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] p-5">
+            <p className="text-xs font-medium text-[var(--text-secondary)]">Preview</p>
+            <h3 className="mt-2 text-base font-semibold text-[var(--text-primary)]">
+              Morning reading notes
+            </h3>
+            <p
+              className="mt-1.5 leading-relaxed text-[var(--text-secondary)]"
+              style={{ fontSize: `${clampedSize}px` }}
+            >
+              Warm surfaces and high-contrast typography adapt seamlessly across every screen.
+            </p>
+          </div>
         </div>
       </section>
     </NavigationShell>

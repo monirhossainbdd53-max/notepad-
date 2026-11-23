@@ -4,6 +4,7 @@ import {
   Camera,
   Check,
   CheckSquare,
+  Code2,
   Heading2,
   Highlighter,
   ImagePlus,
@@ -17,10 +18,12 @@ import {
   Mic,
   MicOff,
   Minus,
+  Palette,
   PenTool,
   Plus,
   Quote,
   Redo2,
+  ScanText,
   Strikethrough,
   Table2,
   Trash2,
@@ -31,15 +34,36 @@ import {
 import { Capacitor } from '@capacitor/core';
 import { SpeechRecognition as NativeSpeechRecognition } from '@capacitor-community/speech-recognition';
 import { useBackHandler, useNotes } from '../context/NotesContext';
+import { scanTextFromImageFile } from '../services/ocrService';
 import { TEXT_TOOLS_CATALOG, TextToolMeta } from '../services/textToolsService';
-import { TextToolId } from '../types/notes';
+import { EditorCursorTarget, TextToolId } from '../types/notes';
 import {
+  placeCaretAtCharOffset,
+  placeCaretAtEnd,
   readAndCompressImage,
   sanitizeNoteThemeElements,
   sanitizeNoteThemeHtml,
 } from '../utils/noteHelpers';
 import { TRANSLATE_LANGUAGES, translateText } from '../utils/translateHelper';
 import { SketchModal } from './SketchModal';
+
+const NOTE_TEXT_COLORS = [
+  { id: 'default', label: 'Default', swatch: '' },
+  { id: 'red', label: 'Red', swatch: '#C62828' },
+  { id: 'orange', label: 'Orange', swatch: '#C2590A' },
+  { id: 'green', label: 'Green', swatch: '#2E7D32' },
+  { id: 'blue', label: 'Blue', swatch: '#1D4ED8' },
+  { id: 'purple', label: 'Purple', swatch: '#7E22CE' },
+  { id: 'gray', label: 'Gray', swatch: '#6B7280' },
+] as const;
+
+function escapeHtmlText(raw: string): string {
+  return raw
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
 
 interface SpeechRecognitionAlternativeLike {
   transcript: string;
@@ -80,6 +104,7 @@ interface RichTextEditorProps {
   onChangeContent: (html: string) => void;
   onChangeImages: (images: string[]) => void;
   autoFocusBody?: boolean;
+  initialCursorTarget?: EditorCursorTarget | null;
 }
 
 interface DragGhostState {
@@ -148,15 +173,23 @@ export function RichTextEditor({
   onChangeContent,
   onChangeImages,
   autoFocusBody = false,
+  initialCursorTarget = null,
 }: RichTextEditorProps) {
   const { isPremium, maxImagesAllowed, requestUpgrade, showToast, textToolsConfig } = useNotes();
   const toolRules = textToolsConfig.tools;
 
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const titleInputRef = useRef<HTMLInputElement>(null);
   const editorWrapperRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<HTMLDivElement>(null);
+  const appliedCursorTargetRef = useRef<EditorCursorTarget | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
+  const ocrGalleryInputRef = useRef<HTMLInputElement>(null);
+  const ocrCameraInputRef = useRef<HTMLInputElement>(null);
   const insertMenuRef = useRef<HTMLDivElement>(null);
+  const toolbarRef = useRef<HTMLDivElement>(null);
+  const blurTimeoutRef = useRef<number | null>(null);
   const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
   const historyRef = useRef<string[]>([content || '']);
   const historyIndexRef = useRef<number>(0);
@@ -197,6 +230,11 @@ export function RichTextEditor({
   const [translateSourceText, setTranslateSourceText] = useState('');
   const [translatingLang, setTranslatingLang] = useState<string | null>(null);
   const translateRangeRef = useRef<Range | null>(null);
+  const [colorBarOpen, setColorBarOpen] = useState(false);
+  const [activeTextColor, setActiveTextColor] = useState<string>('default');
+  const colorRangeRef = useRef<Range | null>(null);
+  const [ocrSheetOpen, setOcrSheetOpen] = useState(false);
+  const [ocrScanning, setOcrScanning] = useState(false);
   const [sizeSliderOpen, setSizeSliderOpen] = useState(false);
   const [activeFontSize, setActiveFontSize] = useState(18);
   const activeSizeGroupRef = useRef<string | null>(null);
@@ -320,6 +358,9 @@ export function RichTextEditor({
 
   useEffect(() => {
     return () => {
+      if (blurTimeoutRef.current !== null) {
+        window.clearTimeout(blurTimeoutRef.current);
+      }
       try {
         recognitionRef.current?.stop();
       } catch {
@@ -338,10 +379,120 @@ export function RichTextEditor({
         unorderedList: document.queryCommandState('insertUnorderedList'),
         orderedList: document.queryCommandState('insertOrderedList'),
       });
+      const sel = window.getSelection();
+      const editor = editorRef.current;
+      if (sel && sel.rangeCount > 0 && editor && editor.contains(sel.anchorNode)) {
+        const baseEl =
+          sel.anchorNode?.nodeType === Node.TEXT_NODE
+            ? sel.anchorNode.parentElement
+            : (sel.anchorNode as HTMLElement | null);
+        const colorEl = baseEl?.closest('[data-note-color]') as HTMLElement | null;
+      setActiveTextColor(colorEl?.getAttribute('data-note-color') || 'default');
+      }
     } catch {
       // Ignore selection errors
     }
   }, []);
+
+  useEffect(() => {
+    if (!initialCursorTarget || appliedCursorTargetRef.current === initialCursorTarget) {
+      return;
+    }
+    appliedCursorTargetRef.current = initialCursorTarget;
+
+    let rafId: number | null = null;
+    let keyboardTimerId: number | null = null;
+
+    if (initialCursorTarget.type === 'title') {
+      const input = titleInputRef.current;
+      if (!input) return;
+      input.focus({ preventScroll: true });
+      const clamped = Math.min(Math.max(0, initialCursorTarget.offset), input.value.length);
+      input.setSelectionRange(clamped, clamped);
+      if (scrollContainerRef.current) {
+        scrollContainerRef.current.scrollTop = 0;
+      }
+      return;
+    }
+
+    const editor = editorRef.current;
+    if (!editor) return;
+
+    const range =
+      initialCursorTarget.type === 'body-offset'
+        ? placeCaretAtCharOffset(editor, initialCursorTarget.offset)
+        : placeCaretAtEnd(editor);
+
+    editor.focus({ preventScroll: true });
+    setIsBodyFocused(true);
+
+    if (range) {
+      savedRangeRef.current = range.cloneRange();
+      syncActiveTableFromNode(range.startContainer);
+    }
+    updateToolbarState();
+
+    const scrollCaretIntoPosition = (usePreferredY: boolean) => {
+      const container = scrollContainerRef.current;
+      if (!container) return;
+
+      if (initialCursorTarget.type === 'body-end') {
+        container.scrollTop = container.scrollHeight;
+        return;
+      }
+
+      if (!range) return;
+      const rects = range.getClientRects();
+      let caretRect: DOMRect | null =
+        rects.length > 0 && (rects[0].height > 0 || rects[0].top > 0) ? rects[0] : null;
+      if (!caretRect) {
+        const bounding = range.getBoundingClientRect();
+        if (bounding.height > 0 || bounding.top > 0) {
+          caretRect = bounding;
+        } else {
+          const fallbackEl =
+            range.startContainer.nodeType === Node.TEXT_NODE
+              ? range.startContainer.parentElement
+              : (range.startContainer as HTMLElement | null);
+          if (fallbackEl) {
+            caretRect = fallbackEl.getBoundingClientRect();
+          }
+        }
+      }
+      if (!caretRect) return;
+
+      const containerRect = container.getBoundingClientRect();
+      if (usePreferredY) {
+        const desiredTopInContainer =
+          initialCursorTarget.preferredViewportY !== undefined
+            ? Math.min(
+                Math.max(initialCursorTarget.preferredViewportY - containerRect.top, 48),
+                Math.max(48, containerRect.height - 72)
+              )
+            : containerRect.height * 0.38;
+        const delta = caretRect.top - containerRect.top - desiredTopInContainer;
+        container.scrollTop = Math.max(0, container.scrollTop + delta);
+      } else if (document.activeElement === editor) {
+        if (caretRect.bottom > containerRect.bottom - 20) {
+          container.scrollTop += caretRect.bottom - (containerRect.bottom - 48);
+        } else if (caretRect.top < containerRect.top + 16) {
+          container.scrollTop = Math.max(
+            0,
+            container.scrollTop - (containerRect.top + 24 - caretRect.top)
+          );
+        }
+      }
+    };
+
+    scrollCaretIntoPosition(true);
+    rafId = window.requestAnimationFrame(() => scrollCaretIntoPosition(true));
+    keyboardTimerId = window.setTimeout(() => scrollCaretIntoPosition(false), 260);
+
+    return () => {
+      if (rafId !== null) window.cancelAnimationFrame(rafId);
+      if (keyboardTimerId !== null) window.clearTimeout(keyboardTimerId);
+    };
+  }, [initialCursorTarget, syncActiveTableFromNode, updateToolbarState]);
 
   const pushHistory = useCallback((html: string) => {
     const stack = historyRef.current;
@@ -674,6 +825,268 @@ export function RichTextEditor({
     restoreSavedRange();
     document.execCommand('insertHTML', false, '<hr /><p><br></p>');
     emitChange();
+  };
+
+  const handleInsertCodeBlock = () => {
+    setInsertMenuOpen(false);
+    const editor = editorRef.current;
+    if (!editor) return;
+
+    restoreSavedRange();
+    const sel = window.getSelection();
+    const selectedText =
+      sel && sel.rangeCount > 0 && editor.contains(sel.getRangeAt(0).commonAncestorContainer)
+        ? sel.toString()
+        : '';
+
+    const blockId = `cb_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const codeContent = selectedText ? escapeHtmlText(selectedText) : '<br>';
+    const codeHtml =
+      `<div class="note-code-block" data-code-block="true" data-cb-id="${blockId}">` +
+      `<div class="note-code-header" contenteditable="false">` +
+      `<span class="note-code-lang">Code</span>` +
+      `<button type="button" class="note-code-copy" data-action="copy-code">Copy</button>` +
+      `</div>` +
+      `<pre><code>${codeContent}</code></pre>` +
+      `</div><p><br></p>`;
+
+    document.execCommand('insertHTML', false, codeHtml);
+
+    const inserted = editor.querySelector(`[data-cb-id="${blockId}"]`);
+    if (inserted) {
+      inserted.removeAttribute('data-cb-id');
+      const codeEl = inserted.querySelector('pre code');
+      if (codeEl && sel) {
+        const range = document.createRange();
+        range.selectNodeContents(codeEl);
+        range.collapse(false);
+        sel.removeAllRanges();
+        sel.addRange(range);
+        savedRangeRef.current = range.cloneRange();
+      }
+    }
+
+    emitChange();
+  };
+
+  const closeColorBar = useCallback(() => {
+    setColorBarOpen(false);
+    colorRangeRef.current = null;
+  }, []);
+
+  useBackHandler(colorBarOpen, closeColorBar);
+
+  const handleOpenColorBar = () => {
+    const editor = editorRef.current;
+    if (!editor) return;
+
+    const sel = window.getSelection();
+    let range: Range | null = null;
+    if (sel && sel.rangeCount > 0 && editor.contains(sel.getRangeAt(0).commonAncestorContainer)) {
+      range = sel.getRangeAt(0);
+    } else if (
+      savedRangeRef.current &&
+      editor.contains(savedRangeRef.current.commonAncestorContainer)
+    ) {
+      range = savedRangeRef.current;
+    }
+
+    if (range && !range.collapsed && range.toString().trim()) {
+      colorRangeRef.current = range.cloneRange();
+      setSizeSliderOpen(false);
+      closeTranslateBar();
+      setInsertMenuOpen(false);
+      setColorBarOpen((prev) => !prev);
+      return;
+    }
+
+    if (colorBarOpen) {
+      closeColorBar();
+    } else {
+      showToast('Select text first to change color');
+    }
+  };
+
+  const handleApplyTextColor = (colorId: (typeof NOTE_TEXT_COLORS)[number]['id']) => {
+    const editor = editorRef.current;
+    if (!editor) return;
+
+    const sel = window.getSelection();
+    let range: Range | null = null;
+    if (
+      sel &&
+      sel.rangeCount > 0 &&
+      editor.contains(sel.getRangeAt(0).commonAncestorContainer) &&
+      !sel.getRangeAt(0).collapsed
+    ) {
+      range = sel.getRangeAt(0);
+    } else if (
+      colorRangeRef.current &&
+      editor.contains(colorRangeRef.current.commonAncestorContainer) &&
+      !colorRangeRef.current.collapsed
+    ) {
+      range = colorRangeRef.current;
+    }
+
+    if (!range || range.collapsed || !range.toString().trim()) {
+      showToast('Select text first to change color');
+      return;
+    }
+
+    editor.focus();
+    if (sel) {
+      sel.removeAllRanges();
+      sel.addRange(range);
+    }
+
+    document.execCommand('fontSize', false, '7');
+    const createdFonts = Array.from(editor.querySelectorAll('font[size="7"]'));
+    if (createdFonts.length === 0) {
+      showToast('Select text first to change color');
+      return;
+    }
+
+    const resultingNodes: Node[] = [];
+
+    createdFonts.forEach((fontEl) => {
+      fontEl.querySelectorAll('[data-note-color]').forEach((nested) => {
+        const parent = nested.parentNode;
+        if (!parent) return;
+        while (nested.firstChild) {
+          parent.insertBefore(nested.firstChild, nested);
+        }
+        parent.removeChild(nested);
+      });
+
+      if (colorId === 'default') {
+        const ancestor = fontEl.closest('[data-note-color]') as HTMLElement | null;
+        if (ancestor && editor.contains(ancestor)) {
+          const ancestorColor = ancestor.getAttribute('data-note-color');
+          const beforeRange = document.createRange();
+          beforeRange.setStart(ancestor, 0);
+          beforeRange.setEndBefore(fontEl);
+          const beforeFrag = beforeRange.extractContents();
+
+          const afterRange = document.createRange();
+          afterRange.setStartAfter(fontEl);
+          afterRange.setEnd(ancestor, ancestor.childNodes.length);
+          const afterFrag = afterRange.extractContents();
+
+          const parent = ancestor.parentNode;
+          if (parent) {
+            if (beforeFrag.textContent || beforeFrag.querySelector('*')) {
+              const beforeSpan = document.createElement('span');
+              if (ancestorColor) beforeSpan.setAttribute('data-note-color', ancestorColor);
+              beforeSpan.appendChild(beforeFrag);
+              parent.insertBefore(beforeSpan, ancestor);
+            }
+            while (fontEl.firstChild) {
+              const child = fontEl.firstChild;
+              parent.insertBefore(child, ancestor);
+              resultingNodes.push(child);
+            }
+            if (afterFrag.textContent || afterFrag.querySelector('*')) {
+              const afterSpan = document.createElement('span');
+              if (ancestorColor) afterSpan.setAttribute('data-note-color', ancestorColor);
+              afterSpan.appendChild(afterFrag);
+              parent.insertBefore(afterSpan, ancestor);
+            }
+            ancestor.remove();
+            return;
+          }
+        }
+
+        const parent = fontEl.parentNode;
+        if (parent) {
+          while (fontEl.firstChild) {
+            const child = fontEl.firstChild;
+            parent.insertBefore(child, fontEl);
+            resultingNodes.push(child);
+          }
+          parent.removeChild(fontEl);
+        }
+      } else {
+        const span = document.createElement('span');
+        span.setAttribute('data-note-color', colorId);
+        while (fontEl.firstChild) {
+          span.appendChild(fontEl.firstChild);
+        }
+        fontEl.parentNode?.replaceChild(span, fontEl);
+
+        const parentEl = span.parentElement;
+        if (
+          parentEl &&
+          parentEl.hasAttribute('data-note-color') &&
+          parentEl.childNodes.length === 1
+        ) {
+          parentEl.parentNode?.replaceChild(span, parentEl);
+        }
+        resultingNodes.push(span);
+      }
+    });
+
+    if (sel && resultingNodes.length > 0) {
+      const nextRange = document.createRange();
+      nextRange.setStartBefore(resultingNodes[0]);
+      nextRange.setEndAfter(resultingNodes[resultingNodes.length - 1]);
+      sel.removeAllRanges();
+      sel.addRange(nextRange);
+      savedRangeRef.current = nextRange.cloneRange();
+      colorRangeRef.current = nextRange.cloneRange();
+    }
+
+    setActiveTextColor(colorId);
+    emitChange();
+  };
+
+  useBackHandler(ocrSheetOpen, () => {
+    if (!ocrScanning) setOcrSheetOpen(false);
+  });
+
+  const handleOpenOcrScanner = () => {
+    saveSelection();
+    setInsertMenuOpen(false);
+    setOcrSheetOpen(true);
+  };
+
+  const handleOcrFileSelected = async (files: FileList | null) => {
+    const file = files?.[0];
+    if (!file || ocrScanning) return;
+    setOcrScanning(true);
+    try {
+      const extracted = await scanTextFromImageFile(file);
+      if (!extracted) {
+        showToast('No readable text found in image');
+        return;
+      }
+      setOcrSheetOpen(false);
+      restoreSavedRange();
+
+      const paragraphs = extracted
+        .split(/\n{2,}/)
+        .map((para) =>
+          `<p>${para
+            .split(/\n/)
+            .map((line) => escapeHtmlText(line))
+            .join('<br>')}</p>`
+        )
+        .join('');
+
+      const ok = document.execCommand('insertHTML', false, paragraphs || escapeHtmlText(extracted));
+      if (!ok) {
+        document.execCommand('insertText', false, extracted);
+      }
+      saveSelection();
+      emitChange();
+      showToast('Scanned text inserted');
+    } catch (err) {
+      showToast(
+        err instanceof Error ? err.message : 'Could not scan text from image',
+        'danger'
+      );
+    } finally {
+      setOcrScanning(false);
+    }
   };
 
   const handleOpenTableModal = () => {
@@ -1517,6 +1930,26 @@ export function RichTextEditor({
   const handleEditorClick = (e: React.MouseEvent<HTMLDivElement>) => {
     const target = e.target as HTMLElement;
 
+    const copyCodeBtn = target.closest('[data-action="copy-code"]');
+    if (copyCodeBtn) {
+      e.preventDefault();
+      e.stopPropagation();
+      const codeBlock = copyCodeBtn.closest('.note-code-block');
+      const codeText =
+        codeBlock?.querySelector('pre code')?.textContent ||
+        codeBlock?.querySelector('pre')?.textContent ||
+        '';
+      if (!codeText.trim()) {
+        showToast('Code block is empty');
+        return;
+      }
+      navigator.clipboard
+        ?.writeText(codeText)
+        .then(() => showToast('Code copied'))
+        .catch(() => showToast('Copy unavailable in this browser'));
+      return;
+    }
+
     const removeBtn = target.closest('[data-action="remove-image"]');
     if (removeBtn) {
       e.preventDefault();
@@ -1556,6 +1989,19 @@ export function RichTextEditor({
         : 'text-[var(--text-primary)] hover:bg-[var(--bg-subtle)]'
     }`;
 
+  const isToolbarVisible =
+    isBodyFocused ||
+    sizeSliderOpen ||
+    colorBarOpen ||
+    translateOpen ||
+    insertMenuOpen ||
+    Boolean(activeTableContext) ||
+    isListening ||
+    tableModalOpen ||
+    linkModalOpen ||
+    sketchOpen ||
+    ocrSheetOpen;
+
   return (
     <div className="flex flex-col flex-1 min-h-0">
       <input
@@ -1580,21 +2026,50 @@ export function RichTextEditor({
           e.target.value = '';
         }}
       />
+      <input
+        ref={ocrGalleryInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={(e) => {
+          void handleOcrFileSelected(e.target.files);
+          e.target.value = '';
+        }}
+      />
+      <input
+        ref={ocrCameraInputRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        className="hidden"
+        onChange={(e) => {
+          void handleOcrFileSelected(e.target.files);
+          e.target.value = '';
+        }}
+      />
 
       {/* Distraction-free scrollable writing & inline media area */}
-      <div className="flex-1 min-h-0 overflow-y-auto px-4 sm:px-8 pt-6 pb-8">
+      <div
+        ref={scrollContainerRef}
+        className="flex-1 min-h-0 overflow-y-auto px-4 sm:px-8 pt-6 pb-8"
+      >
         <input
+          ref={titleInputRef}
           type="text"
           value={title}
           onChange={(e) => onChangeTitle(e.target.value)}
           onFocus={() => {
+            if (blurTimeoutRef.current !== null) {
+              window.clearTimeout(blurTimeoutRef.current);
+              blurTimeoutRef.current = null;
+            }
             setIsBodyFocused(false);
             activeTableCellRef.current = null;
             setActiveTableContext(null);
           }}
           placeholder="Note title"
           aria-label="Note title"
-          className={`w-full bg-transparent text-2xl sm:text-[28px] font-bold tracking-tight text-[var(--text-primary)] placeholder:text-[var(--text-secondary)]/60 focus:outline-none ${
+          className={`w-full bg-transparent text-[18px] sm:text-[20px] font-semibold tracking-[-0.01em] leading-snug text-[var(--text-primary)] placeholder:text-[var(--text-secondary)]/60 focus:outline-none ${
             isBodyFocused ? 'select-none' : ''
           }`}
         />
@@ -1619,15 +2094,43 @@ export function RichTextEditor({
             contentEditable
             suppressContentEditableWarning
             data-placeholder="Start writing..."
-            onFocus={() => setIsBodyFocused(true)}
+            onFocus={() => {
+              if (blurTimeoutRef.current !== null) {
+                window.clearTimeout(blurTimeoutRef.current);
+                blurTimeoutRef.current = null;
+              }
+              setIsBodyFocused(true);
+            }}
             onKeyDown={(e) => {
+              const sel = window.getSelection();
+              const anchorEl =
+                sel?.anchorNode?.nodeType === Node.TEXT_NODE
+                  ? sel.anchorNode.parentElement
+                  : (sel?.anchorNode as HTMLElement | null);
+              const inCodeBlock = Boolean(anchorEl?.closest('.note-code-block pre'));
+
+              if (inCodeBlock && e.key === 'Enter') {
+                e.preventDefault();
+                document.execCommand('insertText', false, '\n');
+                saveSelection();
+                emitChange();
+                return;
+              }
+              if (inCodeBlock && e.key === 'Tab') {
+                e.preventDefault();
+                document.execCommand('insertText', false, '  ');
+                saveSelection();
+                emitChange();
+                return;
+              }
+
               if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
                 e.preventDefault();
                 if (editorRef.current) {
-                  const sel = window.getSelection();
+                  const codeTarget = anchorEl?.closest('.note-code-block pre code');
                   if (sel) {
                     const range = document.createRange();
-                    range.selectNodeContents(editorRef.current);
+                    range.selectNodeContents(codeTarget || editorRef.current);
                     sel.removeAllRanges();
                     sel.addRange(range);
                     savedRangeRef.current = range.cloneRange();
@@ -1653,7 +2156,20 @@ export function RichTextEditor({
             }}
             onBlur={() => {
               saveSelection();
-              setIsBodyFocused(false);
+              if (blurTimeoutRef.current !== null) {
+                window.clearTimeout(blurTimeoutRef.current);
+              }
+              blurTimeoutRef.current = window.setTimeout(() => {
+                blurTimeoutRef.current = null;
+                const activeEl = document.activeElement;
+                if (
+                  activeEl &&
+                  (editorRef.current?.contains(activeEl) || toolbarRef.current?.contains(activeEl))
+                ) {
+                  return;
+                }
+                setIsBodyFocused(false);
+              }, 180);
             }}
             onPointerDown={handleEditorPointerDown}
             onClick={handleEditorClick}
@@ -1691,8 +2207,18 @@ export function RichTextEditor({
         )}
       </div>
 
-      {/* Keyboard-Docked Formatting & Image Toolbar */}
-      <div className="shrink-0 relative z-30 select-none bg-[var(--bg-canvas)]/95 backdrop-blur-md border-t border-[var(--divider)] px-3 sm:px-6 py-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))]">
+      {/* Keyboard-Docked Formatting & Image Toolbar (shown only while writing/editing) */}
+      {isToolbarVisible && (
+        <div
+          ref={toolbarRef}
+          onPointerDownCapture={() => {
+            if (blurTimeoutRef.current !== null) {
+              window.clearTimeout(blurTimeoutRef.current);
+              blurTimeoutRef.current = null;
+            }
+          }}
+          className="shrink-0 relative z-30 select-none bg-[var(--bg-canvas)]/95 backdrop-blur-md border-t border-[var(--divider)] px-3 sm:px-6 py-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))]"
+        >
         {sizeSliderOpen && (
           <div className="mb-2 flex items-center gap-3 rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] px-3.5 py-2">
             <span className="text-[11px] font-semibold text-[var(--text-secondary)] shrink-0">
@@ -1756,6 +2282,56 @@ export function RichTextEditor({
               onMouseDown={(e) => e.preventDefault()}
               onClick={closeSizeSlider}
               aria-label="Done resizing"
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[var(--accent-soft)] text-[var(--accent-primary)] hover:opacity-85 cursor-pointer"
+            >
+              <Check className="h-3.5 w-3.5" strokeWidth={2.4} />
+            </button>
+          </div>
+        )}
+
+        {colorBarOpen && (
+          <div className="mb-2 flex items-center justify-between gap-2 rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] px-3 py-2">
+            <div className="flex items-center gap-2 overflow-x-auto no-scrollbar">
+              <span className="text-[11px] font-semibold text-[var(--text-secondary)] shrink-0">
+                Color
+              </span>
+              {NOTE_TEXT_COLORS.map((c) => {
+                const active = activeTextColor === c.id;
+                return (
+                  <button
+                    key={c.id}
+                    type="button"
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      handleApplyTextColor(c.id);
+                    }}
+                    aria-label={`${c.label} text color`}
+                    title={c.label}
+                    className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full border transition-transform active:scale-95 cursor-pointer ${
+                      active
+                        ? 'border-[var(--accent-primary)] ring-2 ring-[var(--accent-primary)]/30'
+                        : 'border-[var(--divider)]'
+                    }`}
+                  >
+                    {c.swatch ? (
+                      <span
+                        className="h-4.5 w-4.5 rounded-full"
+                        style={{ backgroundColor: c.swatch }}
+                      />
+                    ) : (
+                      <span className="h-4.5 w-4.5 rounded-full border border-[var(--text-secondary)]/60 bg-[var(--text-primary)]/15 flex items-center justify-center text-[9px] font-bold text-[var(--text-primary)]">
+                        A
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+            <button
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={closeColorBar}
+              aria-label="Done coloring"
               className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[var(--accent-soft)] text-[var(--accent-primary)] hover:opacity-85 cursor-pointer"
             >
               <Check className="h-3.5 w-3.5" strokeWidth={2.4} />
@@ -1916,6 +2492,7 @@ export function RichTextEditor({
               isFreeTool('underline') ||
               isFreeTool('strikethrough') ||
               isFreeTool('highlight') ||
+              isFreeTool('text_color') ||
               isFreeTool('bullet_list') ||
               isFreeTool('numbered_list') ||
               isFreeTool('quote') ||
@@ -1925,10 +2502,12 @@ export function RichTextEditor({
               isFreeTool('simple_table') ||
               isFreeTool('insert_link') ||
               isFreeTool('divider') ||
+              isFreeTool('code_block') ||
               isFreeTool('quick_sketch');
             const group4Visible =
               isFreeTool('add_image') ||
               isFreeTool('take_photo') ||
+              isFreeTool('ocr_scan') ||
               isFreeTool('voice_typing') ||
               isFreeTool('translate');
 
@@ -1949,6 +2528,8 @@ export function RichTextEditor({
                   return <Strikethrough className={cls} strokeWidth={2} />;
                 case 'highlight':
                   return <Highlighter className={cls} strokeWidth={2} />;
+                case 'text_color':
+                  return <Palette className={cls} strokeWidth={2} />;
                 case 'bullet_list':
                   return <List className={cls} strokeWidth={2} />;
                 case 'text_size':
@@ -1959,12 +2540,16 @@ export function RichTextEditor({
                   return <Link2 className={cls} strokeWidth={2} />;
                 case 'divider':
                   return <Minus className={cls} strokeWidth={2} />;
+                case 'code_block':
+                  return <Code2 className={cls} strokeWidth={2} />;
                 case 'quick_sketch':
                   return <PenTool className={cls} strokeWidth={2} />;
                 case 'add_image':
                   return <ImagePlus className={cls} strokeWidth={2} />;
                 case 'take_photo':
                   return <Camera className={cls} strokeWidth={2} />;
+                case 'ocr_scan':
+                  return <ScanText className={cls} strokeWidth={2} />;
                 case 'voice_typing':
                   return isListening ? (
                     <MicOff className="h-4 w-4 text-[#E45B5B] shrink-0" strokeWidth={2} />
@@ -2006,6 +2591,9 @@ export function RichTextEditor({
                     restoreSavedRange();
                     handleToggleHighlight();
                     break;
+                  case 'text_color':
+                    handleOpenColorBar();
+                    break;
                   case 'bullet_list':
                     restoreSavedRange();
                     handleFormat('insertUnorderedList');
@@ -2022,6 +2610,9 @@ export function RichTextEditor({
                   case 'divider':
                     handleInsertDivider();
                     break;
+                  case 'code_block':
+                    handleInsertCodeBlock();
+                    break;
                   case 'quick_sketch':
                     handleOpenSketch();
                     break;
@@ -2030,6 +2621,9 @@ export function RichTextEditor({
                     break;
                   case 'take_photo':
                     handleImageTrigger('camera');
+                    break;
+                  case 'ocr_scan':
+                    handleOpenOcrScanner();
                     break;
                   case 'voice_typing':
                     void handleToggleVoice();
@@ -2135,6 +2729,21 @@ export function RichTextEditor({
                     </button>
                   )}
 
+                  {isFreeTool('text_color') && (
+                    <button
+                      type="button"
+                      onPointerDown={(e) => {
+                        e.preventDefault();
+                        runToolAction('text_color', 'Text color', handleOpenColorBar);
+                      }}
+                      aria-label="Text color"
+                      title="Text color"
+                      className={toolbarBtnClass(colorBarOpen)}
+                    >
+                      <Palette className="h-4 w-4" strokeWidth={2} />
+                    </button>
+                  )}
+
                   {isFreeTool('bullet_list') && (
                     <button
                       type="button"
@@ -2225,7 +2834,10 @@ export function RichTextEditor({
                   {isFreeTool('simple_table') && (
                     <button
                       type="button"
-                      onMouseDown={() => saveSelection()}
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        saveSelection();
+                      }}
                       onTouchStart={() => saveSelection()}
                       onClick={() =>
                         runToolAction('simple_table', 'Simple tables', handleOpenTableModal)
@@ -2241,7 +2853,10 @@ export function RichTextEditor({
                   {isFreeTool('insert_link') && (
                     <button
                       type="button"
-                      onMouseDown={() => saveSelection()}
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        saveSelection();
+                      }}
                       onTouchStart={() => saveSelection()}
                       onClick={() =>
                         runToolAction('insert_link', 'Link insertion', handleOpenLinkModal)
@@ -2270,10 +2885,29 @@ export function RichTextEditor({
                     </button>
                   )}
 
+                  {isFreeTool('code_block') && (
+                    <button
+                      type="button"
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        saveSelection();
+                        runToolAction('code_block', 'Code blocks', handleInsertCodeBlock);
+                      }}
+                      aria-label="Code Block"
+                      title="Code Block"
+                      className={toolbarBtnClass(false)}
+                    >
+                      <Code2 className="h-4 w-4" strokeWidth={2} />
+                    </button>
+                  )}
+
                   {isFreeTool('quick_sketch') && (
                     <button
                       type="button"
-                      onMouseDown={() => saveSelection()}
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        saveSelection();
+                      }}
                       onTouchStart={() => saveSelection()}
                       onClick={() =>
                         runToolAction('quick_sketch', 'Quick Sketch', handleOpenSketch)
@@ -2293,7 +2927,10 @@ export function RichTextEditor({
                   {isFreeTool('add_image') && (
                     <button
                       type="button"
-                      onMouseDown={() => saveSelection()}
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        saveSelection();
+                      }}
                       onTouchStart={() => saveSelection()}
                       onClick={() =>
                         runToolAction('add_image', 'Gallery images', () =>
@@ -2311,7 +2948,10 @@ export function RichTextEditor({
                   {isFreeTool('take_photo') && (
                     <button
                       type="button"
-                      onMouseDown={() => saveSelection()}
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        saveSelection();
+                      }}
                       onTouchStart={() => saveSelection()}
                       onClick={() =>
                         runToolAction('take_photo', 'Camera photos', () =>
@@ -2326,11 +2966,33 @@ export function RichTextEditor({
                     </button>
                   )}
 
+                  {isFreeTool('ocr_scan') && (
+                    <button
+                      type="button"
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        saveSelection();
+                      }}
+                      onTouchStart={() => saveSelection()}
+                      onClick={() =>
+                        runToolAction('ocr_scan', 'Image to Text (OCR)', handleOpenOcrScanner)
+                      }
+                      aria-label="Scan Text (OCR)"
+                      title="Scan Text (OCR)"
+                      className={toolbarBtnClass(ocrSheetOpen)}
+                    >
+                      <ScanText className="h-4 w-4" strokeWidth={2} />
+                    </button>
+                  )}
+
                   {isFreeTool('voice_typing') && (
                     <>
                       <button
                         type="button"
-                        onMouseDown={() => saveSelection()}
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          saveSelection();
+                        }}
                         onTouchStart={() => saveSelection()}
                         onClick={() =>
                           runToolAction('voice_typing', 'Voice typing', () => handleToggleVoice())
@@ -2387,7 +3049,10 @@ export function RichTextEditor({
                     <div className="relative" ref={insertMenuRef}>
                       <button
                         type="button"
-                        onMouseDown={() => saveSelection()}
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          saveSelection();
+                        }}
                         onTouchStart={() => saveSelection()}
                         onClick={() => setInsertMenuOpen((v) => !v)}
                         aria-label="Premium text tools"
@@ -2406,6 +3071,7 @@ export function RichTextEditor({
                               meta.id === 'quick_sketch' ||
                               meta.id === 'add_image' ||
                               meta.id === 'take_photo' ||
+                              meta.id === 'ocr_scan' ||
                               meta.id === 'voice_typing';
 
                             return (
@@ -2491,7 +3157,8 @@ export function RichTextEditor({
             );
           })()}
         </div>
-      </div>
+        </div>
+      )}
 
       {/* Floating thumbnail ghost while dragging an inline image */}
       {dragGhost && (
@@ -2629,6 +3296,69 @@ export function RichTextEditor({
         onInsert={(dataUrl) => insertImageBlocksAtSavedRange([dataUrl])}
         onClose={() => setSketchOpen(false)}
       />
+
+      {/* Image-to-Text (OCR) Sheet */}
+      {ocrSheetOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/45 p-0 sm:p-4"
+          role="dialog"
+          aria-modal="true"
+          onClick={() => {
+            if (!ocrScanning) setOcrSheetOpen(false);
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full sm:max-w-sm rounded-t-3xl sm:rounded-3xl bg-[var(--bg-card)] border border-[var(--divider)] p-6 space-y-4"
+          >
+            <div className="mx-auto mb-1 h-1 w-10 rounded-full bg-[var(--divider)] sm:hidden" />
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-bold text-[var(--text-primary)]">
+                Scan Text (OCR)
+              </h3>
+              {!ocrScanning && (
+                <button
+                  type="button"
+                  onClick={() => setOcrSheetOpen(false)}
+                  aria-label="Close"
+                  className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)] cursor-pointer"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              )}
+            </div>
+
+            {ocrScanning ? (
+              <div className="py-6 flex flex-col items-center text-center gap-3">
+                <Loader2 className="h-7 w-7 animate-spin text-[var(--accent-primary)]" />
+                <p className="text-sm font-medium text-[var(--text-primary)]">
+                  Scanning text from image...
+                </p>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => ocrCameraInputRef.current?.click()}
+                  className="flex w-full min-h-[46px] items-center justify-center gap-2.5 rounded-xl bg-[var(--text-primary)] dark:bg-[var(--accent-primary)] text-sm font-semibold text-[var(--bg-card)] dark:text-[#171717] cursor-pointer"
+                >
+                  <Camera className="h-4 w-4" strokeWidth={2} />
+                  <span>Take Photo (Camera)</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => ocrGalleryInputRef.current?.click()}
+                  className="flex w-full min-h-[46px] items-center justify-center gap-2.5 rounded-xl bg-[var(--bg-subtle)] text-sm font-semibold text-[var(--text-primary)] cursor-pointer"
+                >
+                  <ImagePlus className="h-4 w-4" strokeWidth={2} />
+                  <span>Choose from Gallery</span>
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

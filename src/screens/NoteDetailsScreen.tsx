@@ -23,10 +23,13 @@ import { LockMethodDialog } from '../components/LockMethodDialog';
 import { NavigationShell } from '../components/NavigationShell';
 import { PinDialog } from '../components/PinDialog';
 import { useBackHandler, useNotes } from '../context/NotesContext';
+import { EditorCursorTarget } from '../types/notes';
 import { exportSingleNoteAsPdf } from '../utils/exportNotesZip';
 import { verifyBiometricIdentity } from '../utils/biometricHelper';
 import {
   extractNoteImages,
+  getCaretRangeFromPoint,
+  getCharOffsetInRootFromRange,
   sanitizeNoteThemeHtml,
   stripHtmlToText,
   toggleChecklistItemInHtml,
@@ -50,7 +53,7 @@ function highlightSearchMatches(html: string, query: string): { html: string; co
     const parentEl = current.parentElement;
     if (
       parentEl &&
-      !parentEl.closest('.note-image-controls') &&
+      !parentEl.closest('.note-image-controls, .note-code-header') &&
       current.nodeValue &&
       regex.test(current.nodeValue)
     ) {
@@ -131,7 +134,12 @@ export function NoteDetailsScreen() {
   const [findQuery, setFindQuery] = useState('');
   const [isBodySelecting, setIsBodySelecting] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const titleRef = useRef<HTMLHeadingElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
+  const lastTapRef = useRef<{ time: number; x: number; y: number } | null>(null);
+  const touchStartPosRef = useRef<{ x: number; y: number } | null>(null);
+  const autoBiometricPromptedNoteRef = useRef<string | null>(null);
+  const isMountedRef = useRef(true);
 
   useBackHandler(menuOpen, () => setMenuOpen(false));
   useBackHandler(findOpen, () => {
@@ -200,6 +208,62 @@ export function NoteDetailsScreen() {
     return () => document.removeEventListener('mousedown', onOutside);
   }, [menuOpen]);
 
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
+  const isLockConfiguredForAuto =
+    noteLockMethod === 'fingerprint' || (noteLockMethod === 'pin' && Boolean(notePin));
+  const requiresUnlockForAuto = Boolean(
+    note?.isLocked && isLockConfiguredForAuto && !unlockedNoteIds.includes(note.id)
+  );
+
+  useEffect(() => {
+    if (!note) return;
+    if (!requiresUnlockForAuto) {
+      autoBiometricPromptedNoteRef.current = note.id;
+      return;
+    }
+    if (
+      noteLockMethod === 'fingerprint' &&
+      biometricSupported &&
+      autoBiometricPromptedNoteRef.current !== note.id
+    ) {
+      autoBiometricPromptedNoteRef.current = note.id;
+      void (async () => {
+        if (!isMountedRef.current) return;
+        setBiometricBusy(true);
+        try {
+          const res = await verifyBiometricIdentity({
+            title: note.title.trim() || 'Locked Note',
+            subtitle: `Unlock with ${biometryLabel}`,
+          });
+          if (!isMountedRef.current) return;
+          if (res.verified) {
+            unlockNoteSession(note.id);
+          } else if (!res.cancelled && res.errorMessage) {
+            showToast(res.errorMessage, 'danger');
+          }
+        } finally {
+          if (isMountedRef.current) {
+            setBiometricBusy(false);
+          }
+        }
+      })();
+    }
+  }, [
+    biometricSupported,
+    biometryLabel,
+    note,
+    noteLockMethod,
+    requiresUnlockForAuto,
+    showToast,
+    unlockNoteSession,
+  ]);
+
   if (!note) {
     return (
       <NavigationShell showMobileTabs={false}>
@@ -217,11 +281,8 @@ export function NoteDetailsScreen() {
     );
   }
 
-  const isLockConfigured =
-    noteLockMethod === 'fingerprint' || (noteLockMethod === 'pin' && Boolean(notePin));
-  const requiresPinUnlock = Boolean(
-    note.isLocked && isLockConfigured && !unlockedNoteIds.includes(note.id)
-  );
+  const isLockConfigured = isLockConfiguredForAuto;
+  const requiresPinUnlock = requiresUnlockForAuto;
 
   const handleBiometricUnlock = async () => {
     if (biometricBusy) return;
@@ -231,13 +292,16 @@ export function NoteDetailsScreen() {
         title: note.title.trim() || 'Locked Note',
         subtitle: `Unlock with ${biometryLabel}`,
       });
+      if (!isMountedRef.current) return;
       if (res.verified) {
         unlockNoteSession(note.id);
       } else if (!res.cancelled && res.errorMessage) {
         showToast(res.errorMessage, 'danger');
       }
     } finally {
-      setBiometricBusy(false);
+      if (isMountedRef.current) {
+        setBiometricBusy(false);
+      }
     }
   };
 
@@ -268,7 +332,9 @@ export function NoteDetailsScreen() {
             <p className="mt-1.5 text-sm text-[var(--text-secondary)] max-w-xs">
               {isFingerprintMode
                 ? biometricSupported
-                  ? `This note is locked. Verify with ${biometryLabel.toLowerCase()} to read or edit its contents.`
+                  ? biometricBusy
+                    ? `Touch the ${biometryLabel.toLowerCase()} sensor to unlock.`
+                    : `This note is locked. Touch the ${biometryLabel.toLowerCase()} sensor or tap below to unlock.`
                   : `${biometryLabel} is unavailable on this device. Switch to 4-Digit PIN in Settings.`
                 : 'This note is protected. Enter your 4-digit PIN to read or edit its contents.'}
             </p>
@@ -284,7 +350,7 @@ export function NoteDetailsScreen() {
                     className="inline-flex items-center justify-center gap-2 min-h-[46px] rounded-full bg-[var(--text-primary)] dark:bg-[var(--accent-primary)] px-6 text-sm font-semibold text-[var(--bg-card)] dark:text-[#171717] disabled:opacity-60 cursor-pointer"
                   >
                     <Fingerprint className="h-4.5 w-4.5" strokeWidth={2} />
-                    Unlock with {biometryLabel}
+                    {biometricBusy ? `Waiting for ${biometryLabel}...` : `Unlock with ${biometryLabel}`}
                   </button>
                 ) : (
                   <button
@@ -324,6 +390,26 @@ export function NoteDetailsScreen() {
 
   const handleContentClick = (e: React.MouseEvent<HTMLDivElement>) => {
     const target = e.target as HTMLElement;
+    const copyCodeBtn = target.closest('[data-action="copy-code"]') as HTMLElement | null;
+    if (copyCodeBtn) {
+      e.preventDefault();
+      e.stopPropagation();
+      const codeBlock = copyCodeBtn.closest('.note-code-block');
+      const codeText =
+        codeBlock?.querySelector('pre code')?.textContent ||
+        codeBlock?.querySelector('pre')?.textContent ||
+        '';
+      if (!codeText.trim()) {
+        showToast('Code block is empty');
+        return;
+      }
+      navigator.clipboard
+        ?.writeText(codeText)
+        .then(() => showToast('Code copied'))
+        .catch(() => showToast('Copy unavailable in this browser'));
+      return;
+    }
+
     const box = target.closest('.note-check-box');
     if (box) {
       const container = e.currentTarget;
@@ -622,15 +708,183 @@ export function NoteDetailsScreen() {
         )}
 
         {/* Note Content */}
-        <article className="flex-1 px-5 sm:px-8 pt-7 pb-24 max-w-3xl w-full mx-auto">
-          <h1
-            onPointerDown={() => setIsBodySelecting(false)}
-            className={`text-2xl sm:text-[30px] font-bold tracking-tight text-[var(--text-primary)] leading-tight text-balance ${
-              isBodySelecting ? 'select-none' : 'select-text'
-            }`}
-          >
-            {note.title.trim() || 'Untitled Note'}
-          </h1>
+        <article
+          onDoubleClick={(e) => {
+            const target = e.target as HTMLElement | null;
+            if (
+              target?.closest(
+                'a, button, input, textarea, .note-check-box, .note-image-block img, [data-action="copy-code"]'
+              )
+            ) {
+              return;
+            }
+            const resolveCursorTarget = (): EditorCursorTarget => {
+              const titleEl = titleRef.current;
+              if (
+                titleEl &&
+                (titleEl.contains(target) ||
+                  e.clientY <= titleEl.getBoundingClientRect().bottom + 8)
+              ) {
+                if (!note.title.trim()) {
+                  return { type: 'title', offset: 0, preferredViewportY: e.clientY };
+                }
+                const range = getCaretRangeFromPoint(e.clientX, e.clientY);
+                if (range && titleEl.contains(range.startContainer)) {
+                  const offset = getCharOffsetInRootFromRange(titleEl, range);
+                  if (offset !== null) {
+                    return { type: 'title', offset, preferredViewportY: e.clientY };
+                  }
+                }
+                return { type: 'title', offset: note.title.length, preferredViewportY: e.clientY };
+              }
+
+              const bodyEl = bodyRef.current;
+              if (!bodyEl || !stripHtmlToText(note.content).trim()) {
+                return { type: 'body-end' };
+              }
+
+              const lastChild = bodyEl.lastElementChild;
+              if (lastChild && e.clientY > lastChild.getBoundingClientRect().bottom + 24) {
+                return { type: 'body-end' };
+              }
+
+              const range = getCaretRangeFromPoint(e.clientX, e.clientY);
+              if (range && bodyEl.contains(range.startContainer)) {
+                const startEl =
+                  range.startContainer.nodeType === Node.TEXT_NODE
+                    ? range.startContainer.parentElement
+                    : (range.startContainer as HTMLElement | null);
+                if (
+                  startEl?.closest(
+                    '.note-image-block, .note-image-controls, .note-code-header, .note-check-box'
+                  )
+                ) {
+                  return { type: 'body-end' };
+                }
+                const offset = getCharOffsetInRootFromRange(bodyEl, range);
+                if (offset !== null) {
+                  return { type: 'body-offset', offset, preferredViewportY: e.clientY };
+                }
+              }
+
+              return { type: 'body-end' };
+            };
+
+            const cursorTarget = resolveCursorTarget();
+            window.getSelection()?.removeAllRanges();
+            navigate('edit-note', { noteId: note.id, cursorTarget });
+          }}
+          onTouchStart={(e) => {
+            if (e.touches.length === 1) {
+              touchStartPosRef.current = {
+                x: e.touches[0].clientX,
+                y: e.touches[0].clientY,
+              };
+            } else {
+              touchStartPosRef.current = null;
+            }
+          }}
+          onTouchEnd={(e) => {
+            if (e.changedTouches.length !== 1) return;
+            const touch = e.changedTouches[0];
+            const start = touchStartPosRef.current;
+            touchStartPosRef.current = null;
+            if (
+              start &&
+              Math.hypot(touch.clientX - start.x, touch.clientY - start.y) > 14
+            ) {
+              lastTapRef.current = null;
+              return;
+            }
+            const target = e.target as HTMLElement | null;
+            if (
+              target?.closest(
+                'a, button, input, textarea, .note-check-box, .note-image-block img, [data-action="copy-code"]'
+              )
+            ) {
+              lastTapRef.current = null;
+              return;
+            }
+            const now = Date.now();
+            const prev = lastTapRef.current;
+            if (
+              prev &&
+              now - prev.time <= 320 &&
+              Math.hypot(touch.clientX - prev.x, touch.clientY - prev.y) <= 32
+            ) {
+              lastTapRef.current = null;
+              e.preventDefault();
+
+              let cursorTarget: EditorCursorTarget = { type: 'body-end' };
+              const titleEl = titleRef.current;
+              const bodyEl = bodyRef.current;
+              if (
+                titleEl &&
+                (titleEl.contains(target) ||
+                  touch.clientY <= titleEl.getBoundingClientRect().bottom + 8)
+              ) {
+                if (!note.title.trim()) {
+                  cursorTarget = { type: 'title', offset: 0, preferredViewportY: touch.clientY };
+                } else {
+                  const range = getCaretRangeFromPoint(touch.clientX, touch.clientY);
+                  const offset =
+                    range && titleEl.contains(range.startContainer)
+                      ? getCharOffsetInRootFromRange(titleEl, range)
+                      : null;
+                  cursorTarget = {
+                    type: 'title',
+                    offset: offset ?? note.title.length,
+                    preferredViewportY: touch.clientY,
+                  };
+                }
+              } else if (bodyEl && stripHtmlToText(note.content).trim()) {
+                const lastChild = bodyEl.lastElementChild;
+                const clickedBelowContent =
+                  lastChild && touch.clientY > lastChild.getBoundingClientRect().bottom + 24;
+                if (!clickedBelowContent) {
+                  const range = getCaretRangeFromPoint(touch.clientX, touch.clientY);
+                  if (range && bodyEl.contains(range.startContainer)) {
+                    const startEl =
+                      range.startContainer.nodeType === Node.TEXT_NODE
+                        ? range.startContainer.parentElement
+                        : (range.startContainer as HTMLElement | null);
+                    if (
+                      !startEl?.closest(
+                        '.note-image-block, .note-image-controls, .note-code-header, .note-check-box'
+                      )
+                    ) {
+                      const offset = getCharOffsetInRootFromRange(bodyEl, range);
+                      if (offset !== null) {
+                        cursorTarget = {
+                          type: 'body-offset',
+                          offset,
+                          preferredViewportY: touch.clientY,
+                        };
+                      }
+                    }
+                  }
+                }
+              }
+
+              window.getSelection()?.removeAllRanges();
+              navigate('edit-note', { noteId: note.id, cursorTarget });
+            } else {
+              lastTapRef.current = { time: now, x: touch.clientX, y: touch.clientY };
+            }
+          }}
+          className="flex-1 px-5 sm:px-8 pt-7 pb-16 max-w-3xl w-full min-w-0 mx-auto touch-manipulation"
+        >
+          <div className="w-full overflow-x-auto no-scrollbar">
+            <h1
+              ref={titleRef}
+              onPointerDown={() => setIsBodySelecting(false)}
+              className={`inline-block min-w-full whitespace-nowrap text-[18px] sm:text-[20px] font-semibold tracking-[-0.01em] text-[var(--text-primary)] leading-snug ${
+                isBodySelecting ? 'select-none' : 'select-text'
+              }`}
+            >
+              {note.title.trim() || 'Untitled Note'}
+            </h1>
+          </div>
 
           <div className="my-4 h-px bg-[var(--divider)]" />
 
@@ -644,7 +898,7 @@ export function NoteDetailsScreen() {
                 highlightedResult.html ||
                 (extractNoteImages(note.content, legacyImages).length > 0
                   ? ''
-                  : '<p style="color:var(--text-secondary);">This note is empty. Tap Edit to start writing.</p>'),
+                  : '<p style="color:var(--text-secondary);">This note is empty. Double-tap to start writing.</p>'),
             }}
           />
 
@@ -668,16 +922,6 @@ export function NoteDetailsScreen() {
             </div>
           )}
         </article>
-
-        {/* Floating Edit Action Button */}
-        <button
-          type="button"
-          onClick={() => navigate('edit-note', { noteId: note.id })}
-          aria-label="Edit note"
-          className="fixed right-5 bottom-6 lg:right-10 lg:bottom-8 z-30 flex h-13 w-13 items-center justify-center rounded-full bg-[var(--text-primary)] dark:bg-[var(--accent-primary)] text-[var(--bg-card)] dark:text-[#171717] transition-transform active:scale-95 cursor-pointer"
-        >
-          <Edit3 className="h-5 w-5" strokeWidth={2} />
-        </button>
 
         {lightboxSrc && (
           <div

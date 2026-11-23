@@ -19,13 +19,32 @@ export type ScreenName =
   | 'premium'
   | 'help'
   | 'about'
-  | 'admin';
+  | 'admin'
+  | 'cv-generator';
+
+export type EditorCursorTarget =
+  | { type: 'title'; offset: number; preferredViewportY?: number }
+  | { type: 'body-offset'; offset: number; preferredViewportY?: number }
+  | { type: 'body-end' };
 
 export type ThemePreference = 'light' | 'dark' | 'system';
 
 export type ThemePalette = 'default' | 'sepia' | 'sage' | 'slate';
 
-export type NoteFontSize = 'small' | 'medium' | 'large';
+export const NOTE_FONT_SIZE_MIN = 12;
+export const NOTE_FONT_SIZE_MAX = 24;
+export const NOTE_FONT_SIZE_DEFAULT = 16;
+
+export type NoteFontSize = number;
+
+export function normalizeNoteFontSize(value: unknown): NoteFontSize {
+  if (value === 'small') return 14;
+  if (value === 'medium') return 16;
+  if (value === 'large') return 19;
+  const parsed = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(parsed)) return NOTE_FONT_SIZE_DEFAULT;
+  return Math.min(NOTE_FONT_SIZE_MAX, Math.max(NOTE_FONT_SIZE_MIN, Math.round(parsed)));
+}
 
 export type NoteSortOption = 'updated' | 'title' | 'pinned';
 
@@ -57,7 +76,54 @@ export interface Folder {
   id: string;
   name: string;
   isDefault?: boolean;
+  isSystem?: boolean;
   createdAt: string;
+}
+
+export interface CvEducationEntry {
+  id: string;
+  qualification: string;
+  institution: string;
+  board: string;
+  year: string;
+  result: string;
+}
+
+export interface CvExperienceEntry {
+  id: string;
+  jobTitle: string;
+  company: string;
+  duration: string;
+  responsibility: string;
+  achievements: string;
+}
+
+export type CvEnglishLevel = 'Basic' | 'Intermediate' | 'Fluent';
+
+export interface CvData {
+  fullName: string;
+  phone: string;
+  email: string;
+  address: string;
+  portfolioLink: string;
+  careerObjective: string;
+  fathersName: string;
+  mothersName: string;
+  dateOfBirth: string;
+  nationality: string;
+  gender: string;
+  maritalStatus: string;
+  educations: CvEducationEntry[];
+  skills: string[];
+  isFresher: boolean;
+  experiences: CvExperienceEntry[];
+  projects: string[];
+  certificates: string;
+  englishLevel: CvEnglishLevel;
+  otherLanguage: string;
+  interests: string[];
+  signatureText: string;
+  declarationDate: string;
 }
 
 export interface NotificationSettings {
@@ -102,6 +168,12 @@ export interface AutoBackupSchedule {
   days: number;
   lastBackupAt?: string;
   nextBackupAt?: string;
+}
+
+export interface TrashRetentionConfig {
+  enabled: boolean;
+  months: number;
+  days: number;
 }
 
 export interface SupportMessage {
@@ -157,6 +229,7 @@ export type TextToolId =
   | 'underline'
   | 'strikethrough'
   | 'highlight'
+  | 'text_color'
   | 'bullet_list'
   | 'text_size'
   | 'simple_table'
@@ -169,7 +242,9 @@ export type TextToolId =
   | 'translate'
   | 'quote'
   | 'numbered_list'
-  | 'checklist';
+  | 'checklist'
+  | 'code_block'
+  | 'ocr_scan';
 
 export interface TextToolRule {
   enabled: boolean;

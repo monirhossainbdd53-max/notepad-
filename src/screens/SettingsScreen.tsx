@@ -1,7 +1,9 @@
 import React, { useState } from 'react';
 import {
+  AlarmClock,
   Bell,
   CalendarClock,
+  CalendarDays,
   Check,
   CheckCircle2,
   ChevronRight,
@@ -18,18 +20,20 @@ import {
   Lock,
   Moon,
   RotateCcw,
-  Shield,
   ShieldCheck,
+  Trash2,
   User,
+  Vibrate,
 } from 'lucide-react';
 import { ConfirmDialog, InfoSheetDialog } from '../components/ConfirmDialog';
 import { GoogleSignInButton } from '../components/GoogleSignInButton';
 import { NavigationShell } from '../components/NavigationShell';
 import { PinDialog } from '../components/PinDialog';
+import { TrashRetentionDialog } from '../components/TrashRetentionDialog';
 import { useNotes } from '../context/NotesContext';
 import { verifyBiometricIdentity } from '../utils/biometricHelper';
 import { exportNotesAsPdfZip, exportNotesAsTextZip } from '../utils/exportNotesZip';
-import { formatFullDate } from '../utils/noteHelpers';
+import { formatFullDate, formatTrashRetentionDuration } from '../utils/noteHelpers';
 
 export function SettingsScreen() {
   const {
@@ -37,6 +41,7 @@ export function SettingsScreen() {
     theme,
     palette,
     isPremium,
+    canViewSubscriptionPage,
     canUsePremiumPalettes,
     canUseNoteLock,
     canUseDriveBackup,
@@ -63,6 +68,7 @@ export function SettingsScreen() {
     autoBackup,
     updateAutoBackupSchedule,
     disableAutoBackupSchedule,
+    trashRetention,
     restorePurchase,
     navigate,
     showToast,
@@ -71,6 +77,7 @@ export function SettingsScreen() {
   const [notifOpen, setNotifOpen] = useState(false);
   const [backupOpen, setBackupOpen] = useState(false);
   const [autoBackupOpen, setAutoBackupOpen] = useState(false);
+  const [trashRetentionOpen, setTrashRetentionOpen] = useState(false);
   const [autoMonthsInput, setAutoMonthsInput] = useState('');
   const [autoDaysInput, setAutoDaysInput] = useState('');
   const [driveBackupConfirmOpen, setDriveBackupConfirmOpen] = useState(false);
@@ -81,7 +88,6 @@ export function SettingsScreen() {
   const [pinDialogOpen, setPinDialogOpen] = useState(false);
   const [pinSheetOpen, setPinSheetOpen] = useState(false);
   const [biometricBusy, setBiometricBusy] = useState(false);
-  const [legalDoc, setLegalDoc] = useState<'privacy' | 'terms' | null>(null);
   const [avatarError, setAvatarError] = useState(false);
   const [exportingFormat, setExportingFormat] = useState<'txt' | 'pdf' | null>(null);
 
@@ -141,8 +147,13 @@ export function SettingsScreen() {
   })();
 
   const handleOpenAutoBackupDialog = () => {
-    setAutoMonthsInput(autoBackup.months > 0 ? String(autoBackup.months) : '');
-    setAutoDaysInput(autoBackup.days > 0 ? String(autoBackup.days) : '');
+    const hasConfigured = autoBackup.months > 0 || autoBackup.days > 0;
+    setAutoMonthsInput(
+      hasConfigured ? (autoBackup.months > 0 ? String(autoBackup.months) : '') : '1'
+    );
+    setAutoDaysInput(
+      hasConfigured ? (autoBackup.days > 0 ? String(autoBackup.days) : '') : '1'
+    );
     setAutoBackupOpen(true);
   };
 
@@ -341,43 +352,60 @@ export function SettingsScreen() {
                 <ChevronRight className="h-4 w-4" strokeWidth={1.75} />
               </span>
             </button>
-          </div>
-        </div>
 
-        {/* Premium */}
-        <div>
-          <h2 className="px-1 mb-2 text-xs font-semibold text-[var(--text-secondary)]">
-            Premium
-          </h2>
-          <div className="rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] divide-y divide-[var(--divider)]">
             <button
               type="button"
-              onClick={() => navigate('premium')}
+              onClick={() => setTrashRetentionOpen(true)}
               className="flex w-full min-h-[54px] items-center justify-between px-4 text-left hover:bg-[var(--bg-subtle)]/50 transition-colors cursor-pointer"
             >
               <span className="flex items-center gap-3 text-sm font-medium">
-                <Crown className="h-4 w-4 text-[var(--accent-primary)]" strokeWidth={1.9} />
-                Subscription
+                <Trash2 className="h-4 w-4 text-[var(--text-secondary)]" strokeWidth={1.85} />
+                Trash Auto-Delete
               </span>
               <span className="flex items-center gap-1.5 text-xs text-[var(--text-secondary)]">
-                <span>{isPremium ? 'Premium' : 'Free'}</span>
+                <span>{formatTrashRetentionDuration(trashRetention, true)}</span>
                 <ChevronRight className="h-4 w-4" strokeWidth={1.75} />
               </span>
             </button>
-
-            <button
-              type="button"
-              onClick={() => setRestoreOpen(true)}
-              className="flex w-full min-h-[54px] items-center justify-between px-4 text-left hover:bg-[var(--bg-subtle)]/50 transition-colors cursor-pointer"
-            >
-              <span className="flex items-center gap-3 text-sm font-medium">
-                <RotateCcw className="h-4 w-4 text-[var(--text-secondary)]" strokeWidth={1.85} />
-                Restore Purchase
-              </span>
-              <ChevronRight className="h-4 w-4 text-[var(--text-secondary)]" strokeWidth={1.75} />
-            </button>
           </div>
         </div>
+
+        {/* Premium (Hidden for active subscribers and Try Mode users) */}
+        {canViewSubscriptionPage && (
+          <div>
+            <h2 className="px-1 mb-2 text-xs font-semibold text-[var(--text-secondary)]">
+              Premium
+            </h2>
+            <div className="rounded-2xl bg-[var(--bg-card)] border border-[var(--divider)] divide-y divide-[var(--divider)]">
+              <button
+                type="button"
+                onClick={() => navigate('premium')}
+                className="flex w-full min-h-[54px] items-center justify-between px-4 text-left hover:bg-[var(--bg-subtle)]/50 transition-colors cursor-pointer"
+              >
+                <span className="flex items-center gap-3 text-sm font-medium">
+                  <Crown className="h-4 w-4 text-[var(--accent-primary)]" strokeWidth={1.9} />
+                  Subscription
+                </span>
+                <span className="flex items-center gap-1.5 text-xs text-[var(--text-secondary)]">
+                  <span>{isPremium ? 'Premium' : 'Free'}</span>
+                  <ChevronRight className="h-4 w-4" strokeWidth={1.75} />
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setRestoreOpen(true)}
+                className="flex w-full min-h-[54px] items-center justify-between px-4 text-left hover:bg-[var(--bg-subtle)]/50 transition-colors cursor-pointer"
+              >
+                <span className="flex items-center gap-3 text-sm font-medium">
+                  <RotateCcw className="h-4 w-4 text-[var(--text-secondary)]" strokeWidth={1.85} />
+                  Restore Purchase
+                </span>
+                <ChevronRight className="h-4 w-4 text-[var(--text-secondary)]" strokeWidth={1.75} />
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Support */}
         <div>
@@ -394,31 +422,10 @@ export function SettingsScreen() {
                 <HelpCircle className="h-4 w-4 text-[var(--text-secondary)]" strokeWidth={1.85} />
                 Help & Support
               </span>
-              <ChevronRight className="h-4 w-4 text-[var(--text-secondary)]" strokeWidth={1.75} />
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setLegalDoc('privacy')}
-              className="flex w-full min-h-[54px] items-center justify-between px-4 text-left hover:bg-[var(--bg-subtle)]/50 transition-colors cursor-pointer"
-            >
-              <span className="flex items-center gap-3 text-sm font-medium">
-                <Shield className="h-4 w-4 text-[var(--text-secondary)]" strokeWidth={1.85} />
-                Privacy Policy
+              <span className="flex items-center gap-1.5 text-xs text-[var(--text-secondary)]">
+                <span>FAQ, Privacy & Terms</span>
+                <ChevronRight className="h-4 w-4" strokeWidth={1.75} />
               </span>
-              <ChevronRight className="h-4 w-4 text-[var(--text-secondary)]" strokeWidth={1.75} />
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setLegalDoc('terms')}
-              className="flex w-full min-h-[54px] items-center justify-between px-4 text-left hover:bg-[var(--bg-subtle)]/50 transition-colors cursor-pointer"
-            >
-              <span className="flex items-center gap-3 text-sm font-medium">
-                <FileText className="h-4 w-4 text-[var(--text-secondary)]" strokeWidth={1.85} />
-                Terms & Conditions
-              </span>
-              <ChevronRight className="h-4 w-4 text-[var(--text-secondary)]" strokeWidth={1.75} />
             </button>
 
             <button
@@ -569,24 +576,39 @@ export function SettingsScreen() {
               key: 'dailyReminder' as const,
               title: 'Daily Writing Reminder',
               desc: 'Gentle evening prompt to capture daily notes',
+              icon: AlarmClock,
             },
             {
               key: 'weeklyDigest' as const,
               title: 'Weekly Archive Summary',
               desc: 'Recap of newly created and pinned notes',
+              icon: CalendarDays,
             },
             {
               key: 'subtleSounds' as const,
               title: 'Subtle Haptic Feedback',
               desc: 'Soft tactile response on checklist completion',
+              icon: Vibrate,
             },
           ].map((item) => {
+            const Icon = item.icon;
             const enabled = notifications[item.key];
             return (
-              <div key={item.key} className="flex items-center justify-between gap-4 py-3.5">
-                <div>
-                  <p className="text-sm font-medium text-[var(--text-primary)]">{item.title}</p>
-                  <p className="text-xs text-[var(--text-secondary)] mt-0.5">{item.desc}</p>
+              <div key={item.key} className="flex items-center justify-between gap-3.5 py-3.5">
+                <div className="flex items-center gap-3 min-w-0">
+                  <span
+                    className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl transition-colors ${
+                      enabled
+                        ? 'bg-[var(--accent-soft)] text-[var(--accent-primary)]'
+                        : 'bg-[var(--bg-canvas)] text-[var(--text-secondary)]'
+                    }`}
+                  >
+                    <Icon className="h-4.5 w-4.5" strokeWidth={1.9} />
+                  </span>
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-[var(--text-primary)]">{item.title}</p>
+                    <p className="text-xs text-[var(--text-secondary)] mt-0.5">{item.desc}</p>
+                  </div>
                 </div>
                 <button
                   type="button"
@@ -764,6 +786,11 @@ export function SettingsScreen() {
         </form>
       </InfoSheetDialog>
 
+      <TrashRetentionDialog
+        open={trashRetentionOpen}
+        onClose={() => setTrashRetentionOpen(false)}
+      />
+
       <ConfirmDialog
         open={driveBackupConfirmOpen}
         title="Back up & download PDF ZIP?"
@@ -834,47 +861,6 @@ export function SettingsScreen() {
         </div>
       </InfoSheetDialog>
 
-      <InfoSheetDialog
-        open={Boolean(legalDoc)}
-        title={legalDoc === 'privacy' ? 'Privacy Policy' : 'Terms & Conditions'}
-        onClose={() => setLegalDoc(null)}
-      >
-        {legalDoc === 'privacy' ? (
-          <div className="space-y-3 text-sm text-[var(--text-secondary)]">
-            <p>
-              Notes stores your notes, folders, and preferences locally on your device. If you
-              continue in Guest mode, nothing leaves your device unless you choose to translate a
-              selected text snippet.
-            </p>
-            <p>
-              If you sign in with Google, your display name, verified email, and profile photo are
-              used only for your account profile, and Google Drive backups are saved exclusively to
-              your own Drive file (<span className="font-medium text-[var(--text-primary)]">notes-app-backup.json</span>)
-              only when you confirm a backup or restore action.
-            </p>
-            <p>
-              Voice typing uses your device or browser speech recognition engine. You can sign out,
-              export, or clear your local workspace data anytime from Settings or Account.
-            </p>
-          </div>
-        ) : (
-          <div className="space-y-3 text-sm text-[var(--text-secondary)]">
-            <p>
-              Notes is a personal writing and organization workspace. You retain full ownership and
-              control of all notes, sketches, images, and folders you create inside the app.
-            </p>
-            <p>
-              Google Sign-In and Google Drive backup are optional features for personal cloud
-              backup. Translation relies on third-party translation endpoints only for the text you
-              explicitly select to translate.
-            </p>
-            <p>
-              Subscription billing and purchase restoration will connect to the configured payment
-              provider once enabled.
-            </p>
-          </div>
-        )}
-      </InfoSheetDialog>
     </NavigationShell>
   );
 }

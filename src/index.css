@@ -12,6 +12,7 @@
     --accent-primary: #D9A928;
     --accent-soft: #FFF5D9;
     --divider: #EEEEEC;
+    --card-border: #D5D2CA;
     --danger: #E45B5B;
   }
 
@@ -25,6 +26,7 @@
     --accent-primary: #D9A928;
     --accent-soft: rgba(217, 169, 40, 0.16);
     --divider: #2E2E2B;
+    --card-border: #3C3C37;
     --danger: #E45B5B;
   }
 
@@ -38,6 +40,7 @@
     --accent-primary: #B88022;
     --accent-soft: #F5E6C8;
     --divider: #E6DDD0;
+    --card-border: #D4C8B4;
   }
 
   .dark[data-palette="sepia"] {
@@ -49,6 +52,7 @@
     --accent-primary: #D9A928;
     --accent-soft: rgba(217, 169, 40, 0.18);
     --divider: #332B23;
+    --card-border: #453A2F;
   }
 
   [data-palette="sage"] {
@@ -60,6 +64,7 @@
     --accent-primary: #4A7856;
     --accent-soft: #E3EFE6;
     --divider: #E2E8E3;
+    --card-border: #C8D4CA;
   }
 
   .dark[data-palette="sage"] {
@@ -71,6 +76,7 @@
     --accent-primary: #6FA37D;
     --accent-soft: rgba(111, 163, 125, 0.18);
     --divider: #2B352F;
+    --card-border: #39473E;
   }
 
   [data-palette="slate"] {
@@ -82,6 +88,7 @@
     --accent-primary: #436496;
     --accent-soft: #E4ECF7;
     --divider: #E3E7ED;
+    --card-border: #CBD2DD;
   }
 
   .dark[data-palette="slate"] {
@@ -93,22 +100,11 @@
     --accent-primary: #6D92C7;
     --accent-soft: rgba(109, 146, 199, 0.18);
     --divider: #2B323D;
+    --card-border: #3A4352;
   }
 
   :root {
     --note-font-size: 16px;
-  }
-
-  [data-note-size="small"] {
-    --note-font-size: 14.5px;
-  }
-
-  [data-note-size="medium"] {
-    --note-font-size: 16px;
-  }
-
-  [data-note-size="large"] {
-    --note-font-size: 18.5px;
   }
 
   html,
@@ -117,6 +113,25 @@
     background-color: var(--bg-canvas);
     color: var(--text-primary);
     -webkit-tap-highlight-color: transparent;
+  }
+
+  @keyframes app-smooth-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+
+  #root {
+    animation: app-smooth-in 240ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    #root {
+      animation: none;
+    }
   }
 
   ::selection {
@@ -147,6 +162,110 @@
 .note-content [data-note-highlight="true"]::selection {
   background-color: #60A5FA;
   color: #0F172A;
+}
+
+.note-content [data-note-color="red"] {
+  color: #C62828;
+}
+.dark .note-content [data-note-color="red"] {
+  color: #F87171;
+}
+
+.note-content [data-note-color="orange"] {
+  color: #C2590A;
+}
+.dark .note-content [data-note-color="orange"] {
+  color: #FB923C;
+}
+
+.note-content [data-note-color="green"] {
+  color: #2E7D32;
+}
+.dark .note-content [data-note-color="green"] {
+  color: #4ADE80;
+}
+
+.note-content [data-note-color="blue"] {
+  color: #1D4ED8;
+}
+.dark .note-content [data-note-color="blue"] {
+  color: #60A5FA;
+}
+
+.note-content [data-note-color="purple"] {
+  color: #7E22CE;
+}
+.dark .note-content [data-note-color="purple"] {
+  color: #C084FC;
+}
+
+.note-content [data-note-color="gray"] {
+  color: #6B7280;
+}
+.dark .note-content [data-note-color="gray"] {
+  color: #9CA3AF;
+}
+
+.note-content .note-code-block {
+  margin: 0.85rem 0;
+  border-radius: 0.875rem;
+  border: 1px solid var(--divider);
+  background-color: var(--bg-card);
+  overflow: hidden;
+}
+
+.note-content .note-code-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.4rem 0.75rem;
+  border-bottom: 1px solid var(--divider);
+  background-color: var(--bg-subtle);
+  font-family: 'Plus Jakarta Sans', 'Noto Sans Bengali', sans-serif;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  user-select: none;
+}
+
+.note-content .note-code-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.2rem 0.55rem;
+  border-radius: 0.5rem;
+  border: 1px solid var(--divider);
+  background-color: var(--bg-card);
+  color: var(--text-primary);
+  font-size: 0.72rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 150ms ease, border-color 150ms ease;
+}
+
+.note-content .note-code-copy:hover {
+  border-color: var(--accent-primary);
+  background-color: var(--accent-soft);
+}
+
+.note-content .note-code-block pre {
+  margin: 0;
+  padding: 0.85rem 0.95rem;
+  overflow-x: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+  font-size: 0.86em;
+  line-height: 1.55;
+  color: var(--text-primary);
+  white-space: pre;
+  tab-size: 2;
+}
+
+.note-content .note-code-block code {
+  font-family: inherit;
+  outline: none;
+  display: block;
+  min-height: 1.4em;
 }
 
 .note-content:empty::before {

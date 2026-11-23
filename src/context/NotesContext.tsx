@@ -2,6 +2,7 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useR
 import { App as CapApp } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
 import {
+  CV_GENERATION_FOLDER_ID,
   DEFAULT_FOLDERS,
   DEFAULT_MY_NOTES_FOLDER_ID,
   FEATURED_STORY_NOTE_ID,
@@ -14,9 +15,12 @@ import {
   AboutAppConfig,
   AppControlsConfig,
   AutoBackupSchedule,
+  EditorCursorTarget,
   Folder,
   Note,
+  NOTE_FONT_SIZE_DEFAULT,
   NoteFontSize,
+  normalizeNoteFontSize,
   NoteLockMethod,
   NotificationSettings,
   PreviewModeConfig,
@@ -27,10 +31,17 @@ import {
   ThemePalette,
   ThemePreference,
   ToastMessage,
+  TrashRetentionConfig,
   UserAccount,
 } from '../types/notes';
 import { exportNotesAsPdfZip } from '../utils/exportNotesZip';
-import { generateId } from '../utils/noteHelpers';
+import {
+  DEFAULT_TRASH_RETENTION,
+  formatTrashRetentionDuration,
+  generateId,
+  isTrashExpired,
+  normalizeTrashRetention,
+} from '../utils/noteHelpers';
 import {
   initFirebaseAuth,
   restoreDriveBackup,
@@ -92,7 +103,28 @@ interface PersistedState {
   hasOnboarded: boolean;
   previewStartedAt: number;
   autoBackup: AutoBackupSchedule;
+  trashRetention: TrashRetentionConfig;
   seededDefaultStoryV1: boolean;
+}
+
+function ensureSystemFolders(folders: Folder[]): Folder[] {
+  const cvTemplate = DEFAULT_FOLDERS.find((f) => f.id === CV_GENERATION_FOLDER_ID);
+  if (!cvTemplate) return folders;
+  let found = false;
+  const normalized = folders.map((f) => {
+    if (f.id === CV_GENERATION_FOLDER_ID || f.name.trim().toLowerCase() === 'cv generation') {
+      found = true;
+      return {
+        ...f,
+        id: f.id === CV_GENERATION_FOLDER_ID ? f.id : f.id,
+        name: 'Cv Generation',
+        isDefault: true,
+        isSystem: true,
+      };
+    }
+    return f;
+  });
+  return found ? normalized : [...normalized, cvTemplate];
 }
 
 function computeNextAutoBackupIso(from: Date, months: number, days: number): string {
@@ -110,6 +142,7 @@ interface NavigateOptions {
   noteId?: string | null;
   folderId?: string | null;
   replace?: boolean;
+  cursorTarget?: EditorCursorTarget | null;
 }
 
 interface NotesContextValue {
@@ -120,6 +153,7 @@ interface NotesContextValue {
   registerBackHandler: (handler: () => boolean) => () => void;
   activeNoteId: string | null;
   activeFolderId: string | null;
+  activeCursorTarget: EditorCursorTarget | null;
   setActiveFolderId: (id: string | null) => void;
   notes: Note[];
   activeNotes: Note[];
@@ -139,6 +173,7 @@ interface NotesContextValue {
   setIsPremium: (value: boolean) => void;
   hasPaidSubscription: boolean;
   isPreviewAvailable: boolean;
+  canViewSubscriptionPage: boolean;
   previewConfig: PreviewModeConfig;
   previewSyncState: FirestoreSyncState;
   previewSyncError: string | null;
@@ -210,6 +245,9 @@ interface NotesContextValue {
   autoBackup: AutoBackupSchedule;
   updateAutoBackupSchedule: (months: number, days: number) => void;
   disableAutoBackupSchedule: () => void;
+  trashRetention: TrashRetentionConfig;
+  updateTrashRetention: (months: number, days: number) => void;
+  disableTrashRetention: () => void;
   restorePurchase: (transactionId?: string) => Promise<{ restored: boolean; message: string }>;
   recentSearches: string[];
   addRecentSearch: (query: string) => void;
@@ -224,6 +262,10 @@ interface NotesContextValue {
   archiveNote: (id: string) => void;
   restoreArchivedNote: (id: string) => void;
   deleteNote: (id: string) => void;
+  bulkMoveNotes: (ids: string[], folderId: string) => void;
+  bulkArchiveNotes: (ids: string[]) => void;
+  bulkRestoreArchivedNotes: (ids: string[]) => void;
+  bulkDeleteNotes: (ids: string[]) => void;
   restoreDeletedNote: (id: string) => void;
   permanentlyDeleteNote: (id: string) => void;
   emptyTrash: () => void;
@@ -244,7 +286,7 @@ const defaultPersistedState: PersistedState = {
   folders: DEFAULT_FOLDERS,
   theme: 'light',
   palette: 'default',
-  noteFontSize: 'medium',
+  noteFontSize: NOTE_FONT_SIZE_DEFAULT,
   isPremium: false,
   notePin: null,
   noteLockMethod: null,
@@ -259,10 +301,11 @@ const defaultPersistedState: PersistedState = {
   hasOnboarded: false,
   previewStartedAt: Date.now(),
   autoBackup: {
-    enabled: false,
-    months: 0,
-    days: 0,
+    enabled: true,
+    months: 1,
+    days: 1,
   },
+  trashRetention: { ...DEFAULT_TRASH_RETENTION },
   seededDefaultStoryV1: true,
 };
 
@@ -274,6 +317,12 @@ function loadInitialState(): PersistedState {
       return {
         ...defaultPersistedState,
         previewStartedAt: fallbackNow,
+        autoBackup: {
+          enabled: true,
+          months: 1,
+          days: 1,
+          nextBackupAt: computeNextAutoBackupIso(new Date(fallbackNow), 1, 1),
+        },
       };
     }
     const parsed = JSON.parse(raw) as Partial<PersistedState>;
@@ -284,9 +333,10 @@ function loadInitialState(): PersistedState {
         ? parsed.previewStartedAt
         : fallbackNow;
 
-    const loadedFolders: Folder[] = Array.isArray(parsed.folders)
+    const rawLoadedFolders: Folder[] = Array.isArray(parsed.folders)
       ? [...parsed.folders]
       : [...defaultPersistedState.folders];
+    const loadedFolders: Folder[] = ensureSystemFolders(rawLoadedFolders);
     const loadedNotes: Note[] = Array.isArray(parsed.notes)
       ? [...parsed.notes]
       : [...defaultPersistedState.notes];
@@ -308,17 +358,22 @@ function loadInitialState(): PersistedState {
       }
     }
 
+    const loadedTrashRetention = normalizeTrashRetention(parsed.trashRetention);
+    const fallbackIso = new Date(fallbackNow).toISOString();
+    const cleanedNotes: Note[] = loadedNotes
+      .map((n) =>
+        n.isDeleted && !n.deletedAt
+          ? { ...n, deletedAt: n.updatedAt || fallbackIso }
+          : n
+      )
+      .filter((n) => !(n.isDeleted && isTrashExpired(n.deletedAt, fallbackNow, loadedTrashRetention)));
+
     return {
-      notes: loadedNotes,
+      notes: cleanedNotes,
       folders: loadedFolders,
       theme: parsed.theme || 'light',
       palette: parsed.palette || 'default',
-      noteFontSize:
-        parsed.noteFontSize === 'small' ||
-        parsed.noteFontSize === 'medium' ||
-        parsed.noteFontSize === 'large'
-          ? parsed.noteFontSize
-          : 'medium',
+      noteFontSize: normalizeNoteFontSize(parsed.noteFontSize),
       isPremium: Boolean(parsed.isPremium),
       notePin: typeof parsed.notePin === 'string' ? parsed.notePin : null,
       noteLockMethod:
@@ -355,25 +410,52 @@ function loadInitialState(): PersistedState {
         : defaultPersistedState.recentSearches,
       hasOnboarded: Boolean(parsed.hasOnboarded),
       previewStartedAt,
-      autoBackup: {
-        enabled: Boolean(parsed.autoBackup?.enabled),
-        months: Math.max(0, Math.floor(Number(parsed.autoBackup?.months) || 0)),
-        days: Math.max(0, Math.floor(Number(parsed.autoBackup?.days) || 0)),
-        lastBackupAt:
-          typeof parsed.autoBackup?.lastBackupAt === 'string'
-            ? parsed.autoBackup.lastBackupAt
-            : undefined,
-        nextBackupAt:
-          typeof parsed.autoBackup?.nextBackupAt === 'string'
-            ? parsed.autoBackup.nextBackupAt
-            : undefined,
-      },
+      autoBackup: (() => {
+        const rawAuto = parsed.autoBackup;
+        const rawMonths = Math.max(0, Math.floor(Number(rawAuto?.months) || 0));
+        const rawDays = Math.max(0, Math.floor(Number(rawAuto?.days) || 0));
+        const isUntouchedLegacy =
+          !rawAuto ||
+          (!rawAuto.enabled &&
+            rawMonths === 0 &&
+            rawDays === 0 &&
+            !rawAuto.lastBackupAt &&
+            !rawAuto.nextBackupAt);
+        if (isUntouchedLegacy) {
+          return {
+            enabled: true,
+            months: 1,
+            days: 1,
+            nextBackupAt: computeNextAutoBackupIso(new Date(fallbackNow), 1, 1),
+          };
+        }
+        return {
+          enabled: Boolean(rawAuto?.enabled),
+          months: rawMonths,
+          days: rawDays,
+          lastBackupAt:
+            typeof rawAuto?.lastBackupAt === 'string'
+              ? rawAuto.lastBackupAt
+              : undefined,
+          nextBackupAt:
+            typeof rawAuto?.nextBackupAt === 'string'
+              ? rawAuto.nextBackupAt
+              : undefined,
+        };
+      })(),
+      trashRetention: loadedTrashRetention,
       seededDefaultStoryV1: true,
     };
   } catch {
     return {
       ...defaultPersistedState,
       previewStartedAt: fallbackNow,
+      autoBackup: {
+        enabled: true,
+        months: 1,
+        days: 1,
+        nextBackupAt: computeNextAutoBackupIso(new Date(fallbackNow), 1, 1),
+      },
     };
   }
 }
@@ -382,6 +464,7 @@ interface HistoryEntry {
   screen: ScreenName;
   noteId: string | null;
   folderId: string | null;
+  cursorTarget?: EditorCursorTarget | null;
 }
 
 const NotesContext = createContext<NotesContextValue | undefined>(undefined);
@@ -394,7 +477,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   const [theme, setThemeState] = useState<ThemePreference>(initial.theme);
   const [palette, setPaletteState] = useState<ThemePalette>(initial.palette);
   const [noteFontSize, setNoteFontSizeState] = useState<NoteFontSize>(initial.noteFontSize);
-  const [isPremium, setIsPremiumState] = useState<boolean>(initial.isPremium);
+  const [isPremiumState, setIsPremiumState] = useState<boolean>(initial.isPremium);
   const [notePin, setNotePinState] = useState<string | null>(initial.notePin);
   const [noteLockMethod, setNoteLockMethodState] = useState<NoteLockMethod>(
     initial.noteLockMethod
@@ -415,6 +498,9 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   const [hasOnboarded, setHasOnboarded] = useState<boolean>(initial.hasOnboarded);
   const [previewStartedAt] = useState<number>(initial.previewStartedAt);
   const [autoBackup, setAutoBackup] = useState<AutoBackupSchedule>(initial.autoBackup);
+  const [trashRetention, setTrashRetention] = useState<TrashRetentionConfig>(
+    initial.trashRetention
+  );
   const [previewConfig, setPreviewConfig] = useState<PreviewModeConfig>(() =>
     loadCachedPreviewConfig()
   );
@@ -465,6 +551,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   const screen = currentEntry.screen;
   const activeNoteId = currentEntry.noteId;
   const activeFolderId = currentEntry.folderId;
+  const activeCursorTarget = currentEntry.cursorTarget ?? null;
 
   useEffect(() => {
     try {
@@ -474,7 +561,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         theme,
         palette,
         noteFontSize,
-        isPremium,
+        isPremium: isPremiumState,
         notePin,
         noteLockMethod,
         defaultFolderId,
@@ -484,6 +571,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
         hasOnboarded,
         previewStartedAt,
         autoBackup,
+        trashRetention,
         seededDefaultStoryV1: true,
       };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
@@ -496,7 +584,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     theme,
     palette,
     noteFontSize,
-    isPremium,
+    isPremiumState,
     notePin,
     noteLockMethod,
     defaultFolderId,
@@ -506,6 +594,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     hasOnboarded,
     previewStartedAt,
     autoBackup,
+    trashRetention,
   ]);
 
   useEffect(() => {
@@ -528,6 +617,27 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     }
   }, [resolvedTheme]);
 
+  const hasPaidSubscription = useMemo(() => {
+    if (!account.lastTransactionId) return false;
+    if (!account.premiumExpiresAt) return true;
+    const expiry = new Date(account.premiumExpiresAt).getTime();
+    return Number.isFinite(expiry) && expiry > nowMs;
+  }, [account.lastTransactionId, account.premiumExpiresAt, nowMs]);
+
+  const previewExpiresAtMs = useMemo(
+    () => getPreviewExpiresAtMs(previewConfig, previewStartedAt),
+    [previewConfig, previewStartedAt]
+  );
+
+  const isPreviewAvailable = useMemo(() => {
+    if (!previewConfig.enabled || previewExpiresAtMs <= 0) return false;
+    return nowMs < previewExpiresAtMs;
+  }, [nowMs, previewConfig.enabled, previewExpiresAtMs]);
+
+  const isInTryMode = isPreviewAvailable || (isPremiumState && !hasPaidSubscription);
+  const canViewSubscriptionPage = !hasPaidSubscription && !isInTryMode;
+  const isPremium = hasPaidSubscription || isInTryMode;
+
   const canUsePremiumPalettes =
     isPremium || !appControlsConfig.premiumControls.features.themePalettes;
   const canUseNoteLock =
@@ -547,7 +657,8 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   }, [canUsePremiumPalettes, palette]);
 
   useEffect(() => {
-    document.documentElement.setAttribute('data-note-size', noteFontSize);
+    const normalized = normalizeNoteFontSize(noteFontSize);
+    document.documentElement.style.setProperty('--note-font-size', `${normalized}px`);
   }, [noteFontSize]);
 
   useEffect(() => {
@@ -642,28 +753,12 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
 
   const isAdmin = useMemo(() => isAdminAccount(account), [account]);
 
-  const hasPaidSubscription = useMemo(() => {
-    if (!account.lastTransactionId) return false;
-    if (!account.premiumExpiresAt) return true;
-    const expiry = new Date(account.premiumExpiresAt).getTime();
-    return Number.isFinite(expiry) && expiry > nowMs;
-  }, [account.lastTransactionId, account.premiumExpiresAt, nowMs]);
-
-  const previewExpiresAtMs = useMemo(
-    () => getPreviewExpiresAtMs(previewConfig, previewStartedAt),
-    [previewConfig, previewStartedAt]
-  );
-
-  const isPreviewAvailable = useMemo(() => {
-    if (!previewConfig.enabled || previewExpiresAtMs <= 0) return false;
-    return nowMs < previewExpiresAtMs;
-  }, [nowMs, previewConfig.enabled, previewExpiresAtMs]);
-
   useEffect(() => {
     if (!previewConfig.enabled || previewExpiresAtMs <= 0) return;
-    const remaining = previewExpiresAtMs - Date.now();
+    const now = Date.now();
+    const remaining = previewExpiresAtMs - now;
     if (remaining <= 0) {
-      setNowMs(Date.now());
+      setNowMs((prev) => (prev < previewExpiresAtMs ? now : prev));
       return;
     }
     const timer = window.setTimeout(() => {
@@ -680,13 +775,54 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       window.clearTimeout(timer);
       document.removeEventListener('visibilitychange', handleVisibility);
     };
-  }, [previewConfig.enabled, previewExpiresAtMs, nowMs]);
+  }, [previewConfig.enabled, previewExpiresAtMs]);
 
   useEffect(() => {
-    if (isPremium && !isPreviewAvailable && !hasPaidSubscription) {
+    if (isPremiumState && !isPreviewAvailable && !hasPaidSubscription) {
       setIsPremiumState(false);
     }
-  }, [hasPaidSubscription, isPremium, isPreviewAvailable]);
+  }, [hasPaidSubscription, isPremiumState, isPreviewAvailable]);
+
+  useEffect(() => {
+    if (!canViewSubscriptionPage) {
+      setUpgradePromptReason((prev) => (prev === null ? prev : null));
+      if (screen === 'premium') {
+        setHistory((prev) => {
+          const filtered = prev.filter((item) => item.screen !== 'premium');
+          return filtered.length > 0
+            ? filtered
+            : [{ screen: 'home', noteId: null, folderId: null }];
+        });
+      }
+    }
+  }, [canViewSubscriptionPage, screen]);
+
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    const refreshNow = () => {
+      if (document.visibilityState === 'visible') {
+        setNowMs(Date.now());
+      }
+    };
+    document.addEventListener('visibilitychange', refreshNow);
+    const hourlyTimer = window.setInterval(() => setNowMs(Date.now()), 60 * 60 * 1000);
+    return () => {
+      document.removeEventListener('visibilitychange', refreshNow);
+      window.clearInterval(hourlyTimer);
+    };
+  }, []);
+
+  useEffect(() => {
+    setNotes((prev) => {
+      const hasExpired = prev.some(
+        (n) => n.isDeleted && isTrashExpired(n.deletedAt, nowMs, trashRetention)
+      );
+      if (!hasExpired) return prev;
+      return prev.filter(
+        (n) => !(n.isDeleted && isTrashExpired(n.deletedAt, nowMs, trashRetention))
+      );
+    });
+  }, [nowMs, trashRetention]);
 
   useEffect(() => {
     if (!toast) return;
@@ -803,9 +939,13 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     }
   }, [showToast]);
 
-  const requestUpgrade = useCallback((reason: string) => {
-    setUpgradePromptReason(reason);
-  }, []);
+  const requestUpgrade = useCallback(
+    (reason: string) => {
+      if (!canViewSubscriptionPage) return;
+      setUpgradePromptReason(reason);
+    },
+    [canViewSubscriptionPage]
+  );
 
   const dismissUpgradePrompt = useCallback(() => {
     setUpgradePromptReason(null);
@@ -850,7 +990,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       const payload = await restoreDriveBackup();
       setHasDriveAccess(true);
       setNotes(payload.notes);
-      setFolders(payload.folders);
+      setFolders(ensureSystemFolders(payload.folders));
       setAccount((prev) => ({ ...prev, lastDriveBackupAt: payload.exportedAt }));
       showToast(`Restored ${payload.notes.length} notes from Google Drive`);
       return true;
@@ -899,9 +1039,34 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     setAutoBackup((prev) => ({
       ...prev,
       enabled: false,
+      months: prev.months > 0 || prev.days > 0 ? prev.months : 1,
+      days: prev.months > 0 || prev.days > 0 ? prev.days : 1,
       nextBackupAt: undefined,
     }));
     showToast('Auto backup turned off');
+  }, [showToast]);
+
+  const updateTrashRetention = useCallback(
+    (rawMonths: number, rawDays: number) => {
+      const months = Math.max(0, Math.min(120, Math.floor(Number.isFinite(rawMonths) ? rawMonths : 0)));
+      const days = Math.max(0, Math.min(365, Math.floor(Number.isFinite(rawDays) ? rawDays : 0)));
+      if (months === 0 && days === 0) {
+        showToast('Enter at least 1 month or 1 day', 'danger');
+        return;
+      }
+      const nextRetention: TrashRetentionConfig = { enabled: true, months, days };
+      setTrashRetention(nextRetention);
+      showToast(`Trash auto-delete set to ${formatTrashRetentionDuration(nextRetention)}`);
+    },
+    [showToast]
+  );
+
+  const disableTrashRetention = useCallback(() => {
+    setTrashRetention((prev) => ({
+      ...prev,
+      enabled: false,
+    }));
+    showToast('Trash auto-delete turned off');
   }, [showToast]);
 
   useEffect(() => {
@@ -1044,8 +1209,9 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
 
   const canCreateNote =
     isPremium || activeNotes.length < appControlsConfig.freeLimits.maxActiveNotes;
+  const userCreatedFolderCount = folders.filter((f) => !f.isSystem).length;
   const canCreateFolder =
-    isPremium || folders.length < appControlsConfig.freeLimits.maxFolders;
+    isPremium || userCreatedFolderCount < appControlsConfig.freeLimits.maxFolders;
   const maxImagesAllowed = isPremium
     ? Number.POSITIVE_INFINITY
     : appControlsConfig.freeLimits.maxImagesPerNote;
@@ -1058,35 +1224,42 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  const navigate = useCallback((next: ScreenName, options?: NavigateOptions) => {
-    const prev = historyRef.current;
-    const current = prev[prev.length - 1];
-    const nextEntry: HistoryEntry = {
-      screen: next,
-      noteId: options?.noteId !== undefined ? options.noteId : current.noteId,
-      folderId: options?.folderId !== undefined ? options.folderId : current.folderId,
-    };
+  const navigate = useCallback(
+    (next: ScreenName, options?: NavigateOptions) => {
+      if (next === 'premium' && !canViewSubscriptionPage) {
+        return;
+      }
+      const prev = historyRef.current;
+      const current = prev[prev.length - 1];
+      const nextEntry: HistoryEntry = {
+        screen: next,
+        noteId: options?.noteId !== undefined ? options.noteId : current.noteId,
+        folderId: options?.folderId !== undefined ? options.folderId : current.folderId,
+        cursorTarget: options?.cursorTarget ?? null,
+      };
 
-    const topTabs: ScreenName[] = ['home', 'folders', 'favorites', 'settings'];
-    if (topTabs.includes(next) && !options?.replace) {
-      if (typeof window !== 'undefined') {
-        window.history.replaceState({ notesDepth: 0 }, '');
+      const topTabs: ScreenName[] = ['home', 'favorites', 'settings'];
+      if (topTabs.includes(next) && !options?.replace) {
+        if (typeof window !== 'undefined') {
+          window.history.replaceState({ notesDepth: 0 }, '');
+        }
+        setHistory([{ screen: next, noteId: null, folderId: null }]);
+      } else if (options?.replace) {
+        setHistory((curr) => [...curr.slice(0, -1), nextEntry]);
+      } else if (
+        current.screen !== nextEntry.screen ||
+        current.noteId !== nextEntry.noteId ||
+        current.folderId !== nextEntry.folderId
+      ) {
+        if (typeof window !== 'undefined') {
+          window.history.pushState({ notesDepth: prev.length }, '');
+        }
+        setHistory((curr) => [...curr, nextEntry]);
       }
-      setHistory([{ screen: next, noteId: null, folderId: null }]);
-    } else if (options?.replace) {
-      setHistory((curr) => [...curr.slice(0, -1), nextEntry]);
-    } else if (
-      current.screen !== nextEntry.screen ||
-      current.noteId !== nextEntry.noteId ||
-      current.folderId !== nextEntry.folderId
-    ) {
-      if (typeof window !== 'undefined') {
-        window.history.pushState({ notesDepth: prev.length }, '');
-      }
-      setHistory((curr) => [...curr, nextEntry]);
-    }
-    window.scrollTo({ top: 0, behavior: 'instant' as ScrollBehavior });
-  }, []);
+      window.scrollTo({ top: 0, behavior: 'instant' as ScrollBehavior });
+    },
+    [canViewSubscriptionPage]
+  );
 
   const goBack = useCallback(() => {
     const prevLen = historyRef.current.length;
@@ -1199,7 +1372,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const setNoteFontSize = useCallback((size: NoteFontSize) => {
-    setNoteFontSizeState(size);
+    setNoteFontSizeState(normalizeNoteFontSize(size));
   }, []);
 
   const setPalette = useCallback(
@@ -1486,12 +1659,18 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
       }
 
       const nowIso = new Date().toISOString();
+      const fallbackFolderId =
+        folders.find((f) => !f.isSystem && f.id !== CV_GENERATION_FOLDER_ID)?.id ||
+        folders[0]?.id ||
+        '';
       const targetFolder =
         partial?.folderId && folders.some((f) => f.id === partial.folderId)
           ? partial.folderId
-          : folders.some((f) => f.id === defaultFolderId)
+          : folders.some(
+              (f) => f.id === defaultFolderId && !f.isSystem && f.id !== CV_GENERATION_FOLDER_ID
+            )
           ? defaultFolderId
-          : folders[0]?.id || '';
+          : fallbackFolderId;
 
       const newNote: Note = {
         id: generateId('note'),
@@ -1655,6 +1834,128 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     [notes, showToast]
   );
 
+  const bulkMoveNotes = useCallback(
+    (ids: string[], folderId: string) => {
+      if (ids.length === 0) return;
+      const idSet = new Set(ids);
+      const target = folders.find((f) => f.id === folderId);
+      const nowIso = new Date().toISOString();
+      setNotes((prev) =>
+        prev.map((n) => (idSet.has(n.id) ? { ...n, folderId, updatedAt: nowIso } : n))
+      );
+      if (target) {
+        showToast(
+          ids.length === 1
+            ? `Moved 1 note to ${target.name}`
+            : `Moved ${ids.length} notes to ${target.name}`
+        );
+      }
+    },
+    [folders, showToast]
+  );
+
+  const bulkArchiveNotes = useCallback(
+    (ids: string[]) => {
+      if (ids.length === 0) return;
+      const idSet = new Set(ids);
+      const snapshot = new Map(
+        notes
+          .filter((n) => idSet.has(n.id))
+          .map((n) => [
+            n.id,
+            { isArchived: n.isArchived, isPinned: n.isPinned, updatedAt: n.updatedAt },
+          ])
+      );
+      if (snapshot.size === 0) return;
+      const nowIso = new Date().toISOString();
+      setNotes((prev) =>
+        prev.map((n) =>
+          snapshot.has(n.id)
+            ? { ...n, isArchived: true, isPinned: false, updatedAt: nowIso }
+            : n
+        )
+      );
+      const count = snapshot.size;
+      showToast(
+        count === 1 ? '1 note archived' : `${count} notes archived`,
+        'default',
+        () => {
+          setNotes((prev) =>
+            prev.map((n) => {
+              const prevState = snapshot.get(n.id);
+              return prevState ? { ...n, ...prevState } : n;
+            })
+          );
+        }
+      );
+    },
+    [notes, showToast]
+  );
+
+  const bulkRestoreArchivedNotes = useCallback(
+    (ids: string[]) => {
+      if (ids.length === 0) return;
+      const idSet = new Set(ids);
+      const nowIso = new Date().toISOString();
+      setNotes((prev) =>
+        prev.map((n) =>
+          idSet.has(n.id) ? { ...n, isArchived: false, updatedAt: nowIso } : n
+        )
+      );
+      showToast(ids.length === 1 ? '1 note restored' : `${ids.length} notes restored`);
+    },
+    [showToast]
+  );
+
+  const bulkDeleteNotes = useCallback(
+    (ids: string[]) => {
+      if (ids.length === 0) return;
+      const idSet = new Set(ids);
+      const snapshot = new Map(
+        notes
+          .filter((n) => idSet.has(n.id))
+          .map((n) => [
+            n.id,
+            {
+              isDeleted: n.isDeleted,
+              isPinned: n.isPinned,
+              isArchived: n.isArchived,
+              deletedAt: n.deletedAt,
+            },
+          ])
+      );
+      if (snapshot.size === 0) return;
+      const nowIso = new Date().toISOString();
+      setNotes((prev) =>
+        prev.map((n) =>
+          snapshot.has(n.id)
+            ? {
+                ...n,
+                isDeleted: true,
+                isPinned: false,
+                isArchived: false,
+                deletedAt: nowIso,
+              }
+            : n
+        )
+      );
+      const count = snapshot.size;
+      showToast(
+        count === 1 ? '1 note moved to Trash' : `${count} notes moved to Trash`,
+        'default',
+        () => {
+          setNotes((prev) =>
+            prev.map((n) => {
+              const prevState = snapshot.get(n.id);
+              return prevState ? { ...n, ...prevState } : n;
+            })
+          );
+        }
+      );
+    },
+    [notes, showToast]
+  );
+
   const restoreDeletedNote = useCallback(
     (id: string) => {
       setNotes((prev) =>
@@ -1690,7 +1991,8 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
   const createFolder = useCallback(
     (name: string): Folder | null => {
       const maxFoldersLimit = appControlsConfig.freeLimits.maxFolders;
-      if (!isPremium && folders.length >= maxFoldersLimit) {
+      const userFoldersCount = folders.filter((f) => !f.isSystem).length;
+      if (!isPremium && userFoldersCount >= maxFoldersLimit) {
         requestUpgrade(
           `Free plan supports up to ${maxFoldersLimit} folders. Upgrade to Notes Premium for unlimited folders.`
         );
@@ -1708,7 +2010,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     },
     [
       appControlsConfig.freeLimits.maxFolders,
-      folders.length,
+      folders,
       isPremium,
       requestUpgrade,
       showToast,
@@ -1717,18 +2019,29 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
 
   const renameFolder = useCallback(
     (id: string, name: string) => {
+      const target = folders.find((f) => f.id === id);
+      if (target?.isSystem || id === CV_GENERATION_FOLDER_ID) {
+        showToast('Cv Generation folder cannot be renamed', 'danger');
+        return;
+      }
       const trimmed = name.trim();
       if (!trimmed) return;
       setFolders((prev) => prev.map((f) => (f.id === id ? { ...f, name: trimmed } : f)));
       showToast('Folder renamed');
     },
-    [showToast]
+    [folders, showToast]
   );
 
   const deleteFolder = useCallback(
     (id: string) => {
+      const target = folders.find((f) => f.id === id);
+      if (target?.isSystem || id === CV_GENERATION_FOLDER_ID) {
+        showToast('Cv Generation folder cannot be deleted', 'danger');
+        return;
+      }
       const remaining = folders.filter((f) => f.id !== id);
-      const fallbackId = remaining[0]?.id || '';
+      const fallbackId =
+        remaining.find((f) => !f.isSystem && f.id !== CV_GENERATION_FOLDER_ID)?.id || '';
       setFolders(remaining);
       setNotes((prev) =>
         prev.map((n) => (n.folderId === id ? { ...n, folderId: fallbackId } : n))
@@ -1798,6 +2111,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     registerBackHandler,
     activeNoteId,
     activeFolderId,
+    activeCursorTarget,
     setActiveFolderId,
     notes,
     activeNotes,
@@ -1817,6 +2131,7 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     setIsPremium,
     hasPaidSubscription,
     isPreviewAvailable,
+    canViewSubscriptionPage,
     previewConfig,
     previewSyncState,
     previewSyncError,
@@ -1877,6 +2192,9 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     autoBackup,
     updateAutoBackupSchedule,
     disableAutoBackupSchedule,
+    trashRetention,
+    updateTrashRetention,
+    disableTrashRetention,
     restorePurchase,
     recentSearches,
     addRecentSearch,
@@ -1891,6 +2209,10 @@ export function NotesProvider({ children }: { children: React.ReactNode }) {
     archiveNote,
     restoreArchivedNote,
     deleteNote,
+    bulkMoveNotes,
+    bulkArchiveNotes,
+    bulkRestoreArchivedNotes,
+    bulkDeleteNotes,
     restoreDeletedNote,
     permanentlyDeleteNote,
     emptyTrash,

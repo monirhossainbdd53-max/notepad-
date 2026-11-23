@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Archive, ChevronLeft } from 'lucide-react';
+import { BulkActionBar, useBulkSelection } from '../components/BulkActionBar';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { NavigationShell } from '../components/NavigationShell';
 import { NoteCard } from '../components/NoteCard';
@@ -16,6 +17,8 @@ export function ArchiveScreen() {
   } = useNotes();
 
   const [deleteId, setDeleteId] = useState<string | null>(null);
+  const visibleNoteIds = useMemo(() => archivedNotes.map((n) => n.id), [archivedNotes]);
+  const bulk = useBulkSelection(visibleNoteIds);
 
   return (
     <NavigationShell showMobileTabs>
@@ -56,7 +59,14 @@ export function ArchiveScreen() {
                 key={note.id}
                 note={note}
                 folder={getFolderById(note.folderId)}
-                onClick={() => navigate('note-details', { noteId: note.id })}
+                selectionMode={bulk.selectionMode}
+                selected={bulk.isSelected(note.id)}
+                onLongPress={() => bulk.startSelection(note.id)}
+                onClick={() =>
+                  bulk.selectionMode
+                    ? bulk.toggleSelect(note.id)
+                    : navigate('note-details', { noteId: note.id })
+                }
                 onRestore={() => restoreArchivedNote(note.id)}
                 onPermanentDelete={() => setDeleteId(note.id)}
               />
@@ -64,6 +74,14 @@ export function ArchiveScreen() {
           </div>
         )}
       </section>
+
+      <BulkActionBar
+        mode="archive"
+        selectedIds={bulk.selectedIds}
+        allSelected={bulk.allSelected}
+        onToggleSelectAll={bulk.toggleSelectAll}
+        onClear={bulk.clearSelection}
+      />
 
       <ConfirmDialog
         open={Boolean(deleteId)}

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Check, Folder as FolderIcon, Trash2, X } from 'lucide-react';
 import { useBackHandler } from '../context/NotesContext';
+import { CV_GENERATION_FOLDER_ID } from '../data/initialData';
 import { Folder } from '../types/notes';
 
 interface ConfirmDialogProps {
@@ -216,12 +217,14 @@ export function FolderPickerDialog({
         </div>
 
         <div className="divide-y divide-[var(--divider)] max-h-72 overflow-y-auto">
-          {folders.length === 0 ? (
+          {folders.filter((f) => !f.isSystem && f.id !== CV_GENERATION_FOLDER_ID).length === 0 ? (
             <p className="py-6 text-center text-sm text-[var(--text-secondary)]">
               No folders yet. Create one in Folders first.
             </p>
           ) : (
-            folders.map((folder) => {
+            folders
+              .filter((f) => !f.isSystem && f.id !== CV_GENERATION_FOLDER_ID)
+              .map((folder) => {
               const active = folder.id === selectedFolderId;
               return (
                 <button

@@ -28,6 +28,7 @@ interface NoteEditorScreenProps {
 export function NoteEditorScreen({ mode }: NoteEditorScreenProps) {
   const {
     activeNoteId,
+    activeCursorTarget,
     getNoteById,
     getFolderById,
     folders,
@@ -70,6 +71,8 @@ export function NoteEditorScreen({ mode }: NoteEditorScreenProps) {
 
   const menuRef = useRef<HTMLDivElement>(null);
   const saveTimerRef = useRef<number | null>(null);
+  const autoBiometricPromptedNoteRef = useRef<string | null>(null);
+  const isMountedRef = useRef(true);
   const [viewportStyle, setViewportStyle] = useState<{ height?: string }>({});
 
   useEffect(() => {
@@ -114,6 +117,62 @@ export function NoteEditorScreen({ mode }: NoteEditorScreenProps) {
     };
   }, []);
 
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
+  const isLockConfiguredForAuto =
+    noteLockMethod === 'fingerprint' || (noteLockMethod === 'pin' && Boolean(notePin));
+  const requiresUnlockForAuto = Boolean(
+    note?.isLocked && isLockConfiguredForAuto && !unlockedNoteIds.includes(note.id)
+  );
+
+  useEffect(() => {
+    if (!note) return;
+    if (!requiresUnlockForAuto) {
+      autoBiometricPromptedNoteRef.current = note.id;
+      return;
+    }
+    if (
+      noteLockMethod === 'fingerprint' &&
+      biometricSupported &&
+      autoBiometricPromptedNoteRef.current !== note.id
+    ) {
+      autoBiometricPromptedNoteRef.current = note.id;
+      void (async () => {
+        if (!isMountedRef.current) return;
+        setBiometricBusy(true);
+        try {
+          const res = await verifyBiometricIdentity({
+            title: note.title.trim() || 'Locked Note',
+            subtitle: `Unlock with ${biometryLabel}`,
+          });
+          if (!isMountedRef.current) return;
+          if (res.verified) {
+            unlockNoteSession(note.id);
+          } else if (!res.cancelled && res.errorMessage) {
+            showToast(res.errorMessage, 'danger');
+          }
+        } finally {
+          if (isMountedRef.current) {
+            setBiometricBusy(false);
+          }
+        }
+      })();
+    }
+  }, [
+    biometricSupported,
+    biometryLabel,
+    note,
+    noteLockMethod,
+    requiresUnlockForAuto,
+    showToast,
+    unlockNoteSession,
+  ]);
+
   if (!note) {
     return (
       <NavigationShell showMobileTabs={false}>
@@ -131,11 +190,8 @@ export function NoteEditorScreen({ mode }: NoteEditorScreenProps) {
     );
   }
 
-  const isLockConfigured =
-    noteLockMethod === 'fingerprint' || (noteLockMethod === 'pin' && Boolean(notePin));
-  const requiresPinUnlock = Boolean(
-    note.isLocked && isLockConfigured && !unlockedNoteIds.includes(note.id)
-  );
+  const isLockConfigured = isLockConfiguredForAuto;
+  const requiresPinUnlock = requiresUnlockForAuto;
 
   const handleBiometricUnlock = async () => {
     if (biometricBusy) return;
@@ -145,13 +201,16 @@ export function NoteEditorScreen({ mode }: NoteEditorScreenProps) {
         title: note.title.trim() || 'Locked Note',
         subtitle: `Unlock with ${biometryLabel}`,
       });
+      if (!isMountedRef.current) return;
       if (res.verified) {
         unlockNoteSession(note.id);
       } else if (!res.cancelled && res.errorMessage) {
         showToast(res.errorMessage, 'danger');
       }
     } finally {
-      setBiometricBusy(false);
+      if (isMountedRef.current) {
+        setBiometricBusy(false);
+      }
     }
   };
 
@@ -181,7 +240,9 @@ export function NoteEditorScreen({ mode }: NoteEditorScreenProps) {
             <p className="mt-1.5 text-sm text-[var(--text-secondary)] max-w-xs">
               {isFingerprintMode
                 ? biometricSupported
-                  ? `Verify with ${biometryLabel.toLowerCase()} to edit this protected note.`
+                  ? biometricBusy
+                    ? `Touch the ${biometryLabel.toLowerCase()} sensor to unlock.`
+                    : `Touch the ${biometryLabel.toLowerCase()} sensor or tap below to edit this protected note.`
                   : `${biometryLabel} is unavailable on this device. Switch to 4-Digit PIN in Settings.`
                 : 'Enter your 4-digit PIN to edit this protected note.'}
             </p>
@@ -197,7 +258,7 @@ export function NoteEditorScreen({ mode }: NoteEditorScreenProps) {
                     className="inline-flex items-center justify-center gap-2 min-h-[46px] rounded-full bg-[var(--text-primary)] dark:bg-[var(--accent-primary)] px-6 text-sm font-semibold text-[var(--bg-card)] dark:text-[#171717] disabled:opacity-60 cursor-pointer"
                   >
                     <Fingerprint className="h-4.5 w-4.5" strokeWidth={2} />
-                    Unlock with {biometryLabel}
+                    {biometricBusy ? `Waiting for ${biometryLabel}...` : `Unlock with ${biometryLabel}`}
                   </button>
                 ) : (
                   <button
@@ -473,6 +534,7 @@ export function NoteEditorScreen({ mode }: NoteEditorScreenProps) {
           onChangeContent={handleContentChange}
           onChangeImages={handleImagesChange}
           autoFocusBody={mode === 'create'}
+          initialCursorTarget={activeCursorTarget}
         />
 
         <FolderPickerDialog

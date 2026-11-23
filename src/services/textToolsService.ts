@@ -19,6 +19,7 @@ export const TEXT_TOOLS_CATALOG: TextToolMeta[] = [
   { id: 'underline', label: 'Underline', upgradeTitle: 'Underline formatting', defaultEnabled: true, defaultPremium: false },
   { id: 'strikethrough', label: 'Strikethrough', upgradeTitle: 'Strikethrough formatting', defaultEnabled: true, defaultPremium: false },
   { id: 'highlight', label: 'Highlight', upgradeTitle: 'Text highlight', defaultEnabled: true, defaultPremium: false },
+  { id: 'text_color', label: 'Text Color', upgradeTitle: 'Text color', defaultEnabled: true, defaultPremium: false },
   { id: 'bullet_list', label: 'Bullet List', upgradeTitle: 'Bullet lists', defaultEnabled: true, defaultPremium: false },
   { id: 'text_size', label: 'Text Size', upgradeTitle: 'Text resizing', defaultEnabled: true, defaultPremium: false },
   { id: 'simple_table', label: 'Simple Table', upgradeTitle: 'Simple tables', defaultEnabled: true, defaultPremium: false },
@@ -32,6 +33,8 @@ export const TEXT_TOOLS_CATALOG: TextToolMeta[] = [
   { id: 'quote', label: 'Quote', upgradeTitle: 'Quote blocks', defaultEnabled: true, defaultPremium: true },
   { id: 'numbered_list', label: 'Numbered List', upgradeTitle: 'Numbered lists', defaultEnabled: true, defaultPremium: true },
   { id: 'checklist', label: 'Checklist', upgradeTitle: 'Interactive checklists', defaultEnabled: true, defaultPremium: true },
+  { id: 'code_block', label: 'Code Block', upgradeTitle: 'Code blocks', defaultEnabled: true, defaultPremium: true },
+  { id: 'ocr_scan', label: 'Scan Text (OCR)', upgradeTitle: 'Image to Text (OCR)', defaultEnabled: true, defaultPremium: true },
 ];
 
 export function buildDefaultToolsMap(): Record<TextToolId, TextToolRule> {

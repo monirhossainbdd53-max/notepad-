@@ -3,7 +3,6 @@ import {
   Archive,
   Crown,
   FileText,
-  Folder,
   Layers,
   Pin,
   Plus,
@@ -13,6 +12,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { useNotes } from '../context/NotesContext';
+import { CV_GENERATION_FOLDER_ID } from '../data/initialData';
 import { ScreenName } from '../types/notes';
 
 interface NavigationShellProps {
@@ -20,6 +20,8 @@ interface NavigationShellProps {
   showMobileTabs?: boolean;
   showFab?: boolean;
   fabFolderId?: string;
+  onFabClick?: () => void;
+  fabOpen?: boolean;
   noPaddingBottom?: boolean;
 }
 
@@ -28,6 +30,8 @@ export function NavigationShell({
   showMobileTabs = true,
   showFab = false,
   fabFolderId,
+  onFabClick,
+  fabOpen = false,
   noPaddingBottom = false,
 }: NavigationShellProps) {
   const {
@@ -38,13 +42,23 @@ export function NavigationShell({
     favoriteNotes,
     archivedNotes,
     trashedNotes,
-    folders,
     createNote,
     isPremium,
+    canViewSubscriptionPage,
     appControlsConfig,
   } = useNotes();
 
+  const isCvTarget = fabFolderId === CV_GENERATION_FOLDER_ID;
+
   const handleNewNote = () => {
+    if (onFabClick) {
+      onFabClick();
+      return;
+    }
+    if (isCvTarget) {
+      navigate('cv-generator');
+      return;
+    }
     const note = createNote(fabFolderId ? { folderId: fabFolderId } : undefined);
     if (note) {
       navigate('create-note', { noteId: note.id });
@@ -61,7 +75,6 @@ export function NavigationShell({
     { id: 'all-notes', label: 'All Notes', icon: Layers, count: activeNotes.length },
     { id: 'pinned-notes', label: 'Pinned', icon: Pin, count: pinnedNotes.length },
     { id: 'favorites', label: 'Favorites', icon: Star, count: favoriteNotes.length },
-    { id: 'folders', label: 'Folders', icon: Folder, count: folders.length },
     { id: 'archive', label: 'Archived', icon: Archive, count: archivedNotes.length },
     { id: 'trash', label: 'Trash', icon: Trash2, count: trashedNotes.length },
   ];
@@ -72,17 +85,18 @@ export function NavigationShell({
     icon: React.ComponentType<{ className?: string; strokeWidth?: number }>;
   }[] = [
     { id: 'home', label: 'Notes', icon: FileText },
-    { id: 'folders', label: 'Folders', icon: Folder },
     { id: 'favorites', label: 'Favorites', icon: Star },
     { id: 'settings', label: 'Settings', icon: Settings },
   ];
 
   const isTabActive = (tabId: ScreenName) => {
     if (tabId === 'home') {
-      return screen === 'home' || screen === 'all-notes' || screen === 'pinned-notes';
-    }
-    if (tabId === 'folders') {
-      return screen === 'folders' || screen === 'folder-details';
+      return (
+        screen === 'home' ||
+        screen === 'all-notes' ||
+        screen === 'pinned-notes' ||
+        screen === 'cv-generator'
+      );
     }
     if (tabId === 'settings') {
       return (
@@ -138,15 +152,13 @@ export function NavigationShell({
           className="mb-6 flex min-h-[42px] w-full items-center justify-center gap-2 rounded-xl bg-[var(--text-primary)] dark:bg-[var(--accent-primary)] px-4 text-sm font-semibold text-[var(--bg-card)] dark:text-[#171717] transition-opacity hover:opacity-90 cursor-pointer"
         >
           <Plus className="h-4 w-4" strokeWidth={2.2} />
-          <span>New Note</span>
+          <span>{isCvTarget ? 'Create CV' : 'New Note'}</span>
         </button>
 
         <nav className="flex-1 space-y-1 overflow-y-auto no-scrollbar" aria-label="Primary navigation">
           {primaryDesktopNav.map((item) => {
             const Icon = item.icon;
-            const active =
-              screen === item.id ||
-              (item.id === 'folders' && screen === 'folder-details');
+            const active = screen === item.id;
             return (
               <button
                 key={item.id}
@@ -176,25 +188,27 @@ export function NavigationShell({
         </nav>
 
         <div className="pt-4 mt-4 border-t border-[var(--divider)] space-y-1">
-          <button
-            type="button"
-            onClick={() => navigate('premium')}
-            className={`flex w-full min-h-[40px] items-center justify-between rounded-xl px-3 text-sm font-medium transition-colors cursor-pointer ${
-              screen === 'premium'
-                ? 'bg-[var(--accent-soft)] text-[var(--text-primary)]'
-                : 'text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)] hover:text-[var(--text-primary)]'
-            }`}
-          >
-            <span className="flex items-center gap-2.5">
-              <Crown className="h-4 w-4 text-[var(--accent-primary)]" strokeWidth={1.9} />
-              <span>{isPremium ? 'Premium Active' : 'Upgrade'}</span>
-            </span>
-            {!isPremium && (
-              <span className="text-[11px] text-[var(--text-secondary)] tabular-nums">
-                {activeNotes.length}/{appControlsConfig.freeLimits.maxActiveNotes}
+          {canViewSubscriptionPage && (
+            <button
+              type="button"
+              onClick={() => navigate('premium')}
+              className={`flex w-full min-h-[40px] items-center justify-between rounded-xl px-3 text-sm font-medium transition-colors cursor-pointer ${
+                screen === 'premium'
+                  ? 'bg-[var(--accent-soft)] text-[var(--text-primary)]'
+                  : 'text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)] hover:text-[var(--text-primary)]'
+              }`}
+            >
+              <span className="flex items-center gap-2.5">
+                <Crown className="h-4 w-4 text-[var(--accent-primary)]" strokeWidth={1.9} />
+                <span>{isPremium ? 'Premium Active' : 'Upgrade'}</span>
               </span>
-            )}
-          </button>
+              {!isPremium && (
+                <span className="text-[11px] text-[var(--text-secondary)] tabular-nums">
+                  {activeNotes.length}/{appControlsConfig.freeLimits.maxActiveNotes}
+                </span>
+              )}
+            </button>
+          )}
 
           <button
             type="button"
@@ -232,12 +246,16 @@ export function NavigationShell({
         <button
           type="button"
           onClick={handleNewNote}
-          aria-label="Create new note"
+          aria-label={onFabClick ? (fabOpen ? 'Close create menu' : 'Open create menu') : isCvTarget ? 'Create CV' : 'Create new note'}
+          aria-expanded={onFabClick ? fabOpen : undefined}
           className={`fixed right-5 z-30 flex h-13 w-13 items-center justify-center rounded-full bg-[var(--text-primary)] dark:bg-[var(--accent-primary)] text-[var(--bg-card)] dark:text-[#171717] transition-transform active:scale-95 cursor-pointer lg:hidden ${
             showMobileTabs ? 'bottom-20' : 'bottom-6'
           }`}
         >
-          <Plus className="h-6 w-6" strokeWidth={2.2} />
+          <Plus
+            className={`h-6 w-6 transition-transform duration-200 ${fabOpen ? 'rotate-45' : ''}`}
+            strokeWidth={2.2}
+          />
         </button>
       )}
 
@@ -247,7 +265,7 @@ export function NavigationShell({
           aria-label="Bottom navigation"
           className="fixed bottom-0 left-0 right-0 z-30 border-t border-[var(--divider)] bg-[var(--bg-card)]/95 backdrop-blur-md lg:hidden"
         >
-          <div className="mx-auto grid max-w-lg grid-cols-4 h-16 items-center">
+          <div className="mx-auto grid max-w-lg grid-cols-3 h-16 items-center">
             {mobileTabs.map((tab) => {
               const Icon = tab.icon;
               const active = isTabActive(tab.id);

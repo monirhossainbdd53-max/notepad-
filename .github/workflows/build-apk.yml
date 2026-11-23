@@ -88,12 +88,92 @@ jobs:
             }
             fs.writeFileSync(gradlePropsPath, props);
           '
+          mkdir -p android/app/src/main/res/values android/app/src/main/res/values-night android/app/src/main/res/drawable
+          cat <<'EOF' > android/app/src/main/res/values/colors.xml
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <color name="app_canvas_bg">#F8F7F5</color>
+          </resources>
+          EOF
+
+          cat <<'EOF' > android/app/src/main/res/values-night/colors.xml
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <color name="app_canvas_bg">#171717</color>
+          </resources>
+          EOF
+
+          cat <<'EOF' > android/app/src/main/res/drawable/splash.xml
+          <?xml version="1.0" encoding="utf-8"?>
+          <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+              <item android:drawable="@color/app_canvas_bg" />
+              <item>
+                  <bitmap
+                      android:gravity="center"
+                      android:src="@mipmap/ic_launcher" />
+              </item>
+          </layer-list>
+          EOF
+          rm -f android/app/src/main/res/drawable/splash.png android/app/src/main/res/drawable*/splash.png || true
+
+          cat <<'EOF' > android/app/src/main/res/values/styles.xml
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <style name="AppTheme" parent="Theme.AppCompat.DayNight.DarkActionBar">
+                  <item name="colorPrimary">@color/app_canvas_bg</item>
+                  <item name="colorPrimaryDark">@color/app_canvas_bg</item>
+                  <item name="colorAccent">#D9A928</item>
+              </style>
+
+              <style name="AppTheme.NoActionBar" parent="Theme.AppCompat.DayNight.NoActionBar">
+                  <item name="windowActionBar">false</item>
+                  <item name="windowNoTitle">true</item>
+                  <item name="android:windowBackground">@color/app_canvas_bg</item>
+                  <item name="android:statusBarColor">@color/app_canvas_bg</item>
+                  <item name="android:navigationBarColor">@color/app_canvas_bg</item>
+                  <item name="android:windowLightStatusBar">true</item>
+              </style>
+
+              <style name="AppTheme.NoActionBarLaunch" parent="Theme.AppCompat.DayNight.NoActionBar">
+                  <item name="android:windowBackground">@drawable/splash</item>
+                  <item name="android:statusBarColor">@color/app_canvas_bg</item>
+                  <item name="android:navigationBarColor">@color/app_canvas_bg</item>
+                  <item name="android:windowLightStatusBar">true</item>
+              </style>
+          </resources>
+          EOF
+
+          cat <<'EOF' > android/app/src/main/res/values-night/styles.xml
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <style name="AppTheme.NoActionBar" parent="Theme.AppCompat.DayNight.NoActionBar">
+                  <item name="windowActionBar">false</item>
+                  <item name="windowNoTitle">true</item>
+                  <item name="android:windowBackground">@color/app_canvas_bg</item>
+                  <item name="android:statusBarColor">@color/app_canvas_bg</item>
+                  <item name="android:navigationBarColor">@color/app_canvas_bg</item>
+                  <item name="android:windowLightStatusBar">false</item>
+              </style>
+
+              <style name="AppTheme.NoActionBarLaunch" parent="Theme.AppCompat.DayNight.NoActionBar">
+                  <item name="android:windowBackground">@drawable/splash</item>
+                  <item name="android:statusBarColor">@color/app_canvas_bg</item>
+                  <item name="android:navigationBarColor">@color/app_canvas_bg</item>
+                  <item name="android:windowLightStatusBar">false</item>
+              </style>
+          </resources>
+          EOF
+
           mkdir -p android/app/src/main/java/com/riyad/notes
           cat <<'EOF' > android/app/src/main/java/com/riyad/notes/MainActivity.java
           package com.riyad.notes;
 
           import android.content.Intent;
+          import android.graphics.Color;
+          import android.os.Bundle;
           import android.util.Log;
+          import android.view.animation.DecelerateInterpolator;
+          import android.webkit.WebView;
           import com.getcapacitor.BridgeActivity;
           import com.getcapacitor.Plugin;
           import com.getcapacitor.PluginHandle;
@@ -102,6 +182,27 @@ jobs:
           import ee.forgr.capacitor.social.login.SocialLoginPlugin;
 
           public class MainActivity extends BridgeActivity implements ModifiedMainActivityForSocialLoginPlugin {
+
+              @Override
+              public void onCreate(Bundle savedInstanceState) {
+                  super.onCreate(savedInstanceState);
+                  overridePendingTransition(android.R.anim.fade_in, android.R.anim.fade_out);
+                  if (getBridge() != null && getBridge().getWebView() != null) {
+                      final WebView webView = getBridge().getWebView();
+                      webView.setBackgroundColor(Color.TRANSPARENT);
+                      webView.setAlpha(0f);
+                      webView.postDelayed(new Runnable() {
+                          @Override
+                          public void run() {
+                              webView.animate()
+                                  .alpha(1f)
+                                  .setDuration(240)
+                                  .setInterpolator(new DecelerateInterpolator())
+                                  .start();
+                          }
+                      }, 60);
+                  }
+              }
 
               @Override
               protected void onActivityResult(int requestCode, int resultCode, Intent data) {

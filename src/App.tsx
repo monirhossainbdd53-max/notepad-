@@ -34,6 +34,7 @@ import { PremiumScreen } from './screens/PremiumScreen';
 import { HelpSupportScreen } from './screens/HelpSupportScreen';
 import { AboutAppScreen } from './screens/AboutAppScreen';
 import { AdminPanelScreen } from './screens/AdminPanelScreen';
+import { CvGeneratorScreen } from './screens/CvGeneratorScreen';
 
 function ScreenRouter() {
   const {
@@ -42,6 +43,7 @@ function ScreenRouter() {
     dismissToast,
     upgradePromptReason,
     dismissUpgradePrompt,
+    canViewSubscriptionPage,
     navigate,
   } = useNotes();
 
@@ -137,13 +139,15 @@ function ScreenRouter() {
       case 'account':
         return <AccountScreen />;
       case 'premium':
-        return <PremiumScreen />;
+        return canViewSubscriptionPage ? <PremiumScreen /> : <NotesHomeScreen />;
       case 'help':
         return <HelpSupportScreen />;
       case 'about':
         return <AboutAppScreen />;
       case 'admin':
         return <AdminPanelScreen />;
+      case 'cv-generator':
+        return <CvGeneratorScreen />;
       default:
         return <NotesHomeScreen />;
     }
@@ -153,11 +157,13 @@ function ScreenRouter() {
     <>
       {renderScreen()}
 
-      <UpgradePromptDialog
-        reason={upgradePromptReason}
-        onUpgrade={() => navigate('premium')}
-        onClose={dismissUpgradePrompt}
-      />
+      {canViewSubscriptionPage && (
+        <UpgradePromptDialog
+          reason={upgradePromptReason}
+          onUpgrade={() => navigate('premium')}
+          onClose={dismissUpgradePrompt}
+        />
+      )}
 
       {screen !== 'splash' && (
         <AppUpdateDialog

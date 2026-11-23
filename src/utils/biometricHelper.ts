@@ -86,6 +86,7 @@ export async function verifyBiometricIdentity(options?: {
   subtitle?: string;
   reason?: string;
   description?: string;
+  negativeButtonText?: string;
 }): Promise<{ verified: boolean; cancelled?: boolean; errorMessage?: string }> {
   if (!Capacitor.isNativePlatform()) {
     return {
@@ -100,7 +101,7 @@ export async function verifyBiometricIdentity(options?: {
       subtitle: options?.subtitle || 'Confirm your identity',
       reason: options?.reason || 'Authenticate to view this locked note',
       description: options?.description || 'Use your fingerprint or biometrics to unlock',
-      negativeButtonText: 'Use PIN',
+      negativeButtonText: options?.negativeButtonText || 'Cancel',
       maxAttempts: 3,
     });
     return { verified: true };

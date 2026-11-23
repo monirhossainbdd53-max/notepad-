@@ -64,7 +64,7 @@ function getSocialIcon(id: SocialPlatformId): React.ReactNode {
 }
 
 export function AboutAppScreen() {
-  const { aboutConfig, navigate, goBack } = useNotes();
+  const { aboutConfig, canViewSubscriptionPage, navigate, goBack } = useNotes();
   const [installedVersion, setInstalledVersion] = useState<string>(
     (import.meta.env.VITE_APP_VERSION || '1.0.0').replace(/^v/i, '')
   );
@@ -202,8 +202,12 @@ export function AboutAppScreen() {
           )
         )}
 
-        {/* Compact 3-Column Quick Links */}
-        <div className="grid grid-cols-3 gap-2">
+        {/* Compact Quick Links */}
+        <div
+          className={`grid gap-2 ${
+            canViewSubscriptionPage ? 'grid-cols-3' : 'grid-cols-2'
+          }`}
+        >
           <button
             type="button"
             onClick={() => navigate('splash')}
@@ -222,14 +226,16 @@ export function AboutAppScreen() {
             <ChevronRight className="h-3.5 w-3.5 shrink-0 text-[var(--text-secondary)]" strokeWidth={1.8} />
           </button>
 
-          <button
-            type="button"
-            onClick={() => navigate('premium')}
-            className="flex min-h-[44px] items-center justify-center gap-1 rounded-xl bg-[var(--bg-card)] border border-[var(--divider)] px-2 text-xs font-medium text-[var(--text-primary)] hover:bg-[var(--bg-subtle)]/60 transition-colors cursor-pointer"
-          >
-            <span className="truncate">Premium</span>
-            <ChevronRight className="h-3.5 w-3.5 shrink-0 text-[var(--text-secondary)]" strokeWidth={1.8} />
-          </button>
+          {canViewSubscriptionPage && (
+            <button
+              type="button"
+              onClick={() => navigate('premium')}
+              className="flex min-h-[44px] items-center justify-center gap-1 rounded-xl bg-[var(--bg-card)] border border-[var(--divider)] px-2 text-xs font-medium text-[var(--text-primary)] hover:bg-[var(--bg-subtle)]/60 transition-colors cursor-pointer"
+            >
+              <span className="truncate">Premium</span>
+              <ChevronRight className="h-3.5 w-3.5 shrink-0 text-[var(--text-secondary)]" strokeWidth={1.8} />
+            </button>
+          )}
         </div>
 
         {/* Dynamic Leadership & Team Profiles (Admin-controlled, cached for offline) */}

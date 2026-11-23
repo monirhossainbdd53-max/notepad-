@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import dotenv from 'dotenv';
 import express, { Request, Response } from 'express';
 import fs from 'fs';
+import { GoogleGenAI, GenerateContentResponse } from '@google/genai';
 import nodemailer from 'nodemailer';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -282,8 +283,8 @@ async function queryBinancePayOrder(merchantTradeNo: string): Promise<{
 
 async function startServer() {
   const app = express();
-  app.use(express.json());
-  app.use(express.urlencoded({ extended: true }));
+  app.use(express.json({ limit: '15mb' }));
+  app.use(express.urlencoded({ extended: true, limit: '15mb' }));
 
   // Allow mobile Capacitor origin & web origins to call billing API cleanly
   app.use('/api', (req, res, next) => {
@@ -779,6 +780,78 @@ async function startServer() {
         configured: true,
         error: err instanceof Error ? err.message : 'Failed to send reply email.',
       });
+    }
+  });
+
+  app.post('/api/ocr', async (req: Request, res: Response) => {
+    try {
+      const apiKey = (process.env.GEMINI_API_KEY || '').trim();
+      if (!apiKey || apiKey.startsWith('MY_')) {
+        res.status(503).json({
+          error: 'AI OCR is unavailable because GEMINI_API_KEY is not configured on the server.',
+        });
+        return;
+      }
+
+      const rawBase64 = typeof req.body?.imageBase64 === 'string' ? req.body.imageBase64.trim() : '';
+      const rawMime = typeof req.body?.mimeType === 'string' ? req.body.mimeType.trim().toLowerCase() : '';
+      const allowedMimes = new Set([
+        'image/jpeg',
+        'image/jpg',
+        'image/png',
+        'image/webp',
+        'image/gif',
+        'image/heic',
+        'image/heif',
+      ]);
+
+      const mimeType = rawMime === 'image/jpg' ? 'image/jpeg' : rawMime;
+      if (!allowedMimes.has(mimeType)) {
+        res.status(400).json({ error: 'Unsupported image format for text scan.' });
+        return;
+      }
+
+      if (!rawBase64 || rawBase64.length > 12_000_000) {
+        res.status(400).json({ error: 'Invalid or oversized image payload.' });
+        return;
+      }
+
+      const cleanBase64 = rawBase64.replace(/^data:[^;]+;base64,/i, '');
+      if (!/^[A-Za-z0-9+/=]+$/.test(cleanBase64)) {
+        res.status(400).json({ error: 'Invalid base64 image encoding.' });
+        return;
+      }
+
+      const ai = new GoogleGenAI({
+        apiKey,
+        httpOptions: {
+          headers: {
+            'User-Agent': 'aistudio-build',
+          },
+        },
+      });
+
+      const imagePart = {
+        inlineData: {
+          mimeType,
+          data: cleanBase64,
+        },
+      };
+      const textPart = {
+        text:
+          'Extract all readable text from this image accurately. Preserve original languages (such as Bengali, English, or mixed text), numbers, punctuation, line breaks, paragraphs, and list structure. Do not translate, summarize, explain, or wrap in markdown code fences. Return only the extracted text. If there is no readable text in the image, return an empty string.',
+      };
+
+      const response: GenerateContentResponse = await ai.models.generateContent({
+        model: 'gemini-4-hydrogen',
+        contents: { parts: [imagePart, textPart] },
+      });
+
+      const extractedText = (response.text ?? '').trim();
+      res.json({ text: extractedText });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Could not scan text from image.';
+      res.status(502).json({ error: msg });
     }
   });
 

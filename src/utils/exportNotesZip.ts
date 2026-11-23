@@ -7,7 +7,7 @@ import { Folder, Note } from '../types/notes';
 import { extractNoteImages, formatFullDate, stripHtmlToText } from './noteHelpers';
 
 interface ParsedPdfBlock {
-  type: 'heading' | 'paragraph' | 'bullet' | 'numbered' | 'checklist' | 'quote' | 'divider' | 'image' | 'table';
+  type: 'heading' | 'paragraph' | 'bullet' | 'numbered' | 'checklist' | 'quote' | 'code' | 'divider' | 'image' | 'table';
   text?: string;
   checked?: boolean;
   index?: number;
@@ -58,7 +58,21 @@ function htmlToStructuredText(html: string): string {
     const el = node as HTMLElement;
     const tag = el.tagName.toLowerCase();
 
-    if (el.classList.contains('note-image-controls') || el.classList.contains('note-image-block')) {
+    if (
+      el.classList.contains('note-image-controls') ||
+      el.classList.contains('note-image-block') ||
+      el.classList.contains('note-code-header')
+    ) {
+      return;
+    }
+
+    if (el.classList.contains('note-code-block')) {
+      const codeText = (
+        el.querySelector('pre code')?.textContent ||
+        el.querySelector('pre')?.textContent ||
+        ''
+      ).trim();
+      if (codeText) lines.push(codeText);
       return;
     }
 
@@ -167,7 +181,19 @@ function parseHtmlToPdfBlocks(note: Note): ParsedPdfBlock[] {
     const el = node as HTMLElement;
     const tag = el.tagName.toLowerCase();
 
-    if (el.classList.contains('note-image-controls')) return;
+    if (el.classList.contains('note-image-controls') || el.classList.contains('note-code-header')) {
+      return;
+    }
+
+    if (el.classList.contains('note-code-block')) {
+      const codeText = (
+        el.querySelector('pre code')?.textContent ||
+        el.querySelector('pre')?.textContent ||
+        ''
+      ).replace(/\u00a0/g, ' ').trim();
+      if (codeText) blocks.push({ type: 'code', text: codeText });
+      return;
+    }
 
     if (el.classList.contains('note-image-block')) {
       const img = el.querySelector('img');
@@ -542,6 +568,28 @@ async function renderNoteToPdfBytes(note: Note, folderName: string): Promise<Uin
         page.y += 38;
       }
       page.y += 14;
+      continue;
+    }
+
+    if (block.type === 'code') {
+      const monoFont = 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
+      page.ctx.font = `400 22px ${monoFont}`;
+      const lines = wrapCanvasText(page.ctx, rawText, contentWidth - 40);
+      const lineH = 32;
+      const padY = 18;
+      const boxHeight = lines.length * lineH + padY * 2;
+      ensureSpace(Math.min(boxHeight + 14, pageHeightPx - marginTop - marginBottom));
+      page.ctx.fillStyle = '#F3F4F6';
+      page.ctx.fillRect(marginX, page.y, contentWidth, boxHeight);
+      page.ctx.strokeStyle = '#E5E7EB';
+      page.ctx.lineWidth = 1.5;
+      page.ctx.strokeRect(marginX, page.y, contentWidth, boxHeight);
+      page.ctx.fillStyle = '#111827';
+      page.ctx.font = `400 22px ${monoFont}`;
+      lines.forEach((line, idx) => {
+        page.ctx.fillText(line, marginX + 20, page.y + padY + 20 + idx * lineH);
+      });
+      page.y += boxHeight + 16;
       continue;
     }
 
